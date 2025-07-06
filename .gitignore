@@ -1,0 +1,9 @@
+/vendor/
+/node_modules/
+/.env
+docker/mysql/data/
+/db_data/
+/storage/*.key
+.idea/
+/*.log
+.DS_Store

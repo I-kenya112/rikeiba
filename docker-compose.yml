@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: php/Dockerfile
+    container_name: rikeiba_app
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - db
+
+  web:
+    image: nginx:latest
+    container_name: rikeiba_web
+    ports:
+      - "8000:80"
+    volumes:
+      - ./webapp:/var/www/html
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+
+  db:
+    image: mysql:8.0
+    container_name: rikeiba_db
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: rikeiba
+      MYSQL_USER: rikeiba
+      MYSQL_PASSWORD: rikeiba
+      MYSQL_ROOT_PASSWORD: rikeiba
+    volumes:
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:
