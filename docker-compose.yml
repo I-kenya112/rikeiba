@@ -7,7 +7,7 @@ services:
       dockerfile: php/Dockerfile
     container_name: rikeiba_app
     volumes:
-      - ./:/var/www/html
+      - ./webapp:/var/www/html
     depends_on:
       - db
 
