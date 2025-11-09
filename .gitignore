@@ -1,9 +1,18 @@
-/vendor/
-/node_modules/
-/.env
-docker/mysql/data/
-/db_data/
-/storage/*.key
-.idea/
-/*.log
+# Laravel
+/webapp/vendor/
+/webapp/node_modules/
+/webapp/.env
+/webapp/storage/*.key
+/webapp/storage/*.log
+/webapp/.phpunit.result.cache
+
+# OS/エディタ
 .DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Dockerコンテナで作られるログなど
+docker/mysql/data/
+docker/nginx/logs/

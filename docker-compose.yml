@@ -27,7 +27,7 @@ services:
     container_name: rikeiba_db
     restart: always
     ports:
-      - "3306:3306"
+      - "3307:3306"
     environment:
       MYSQL_DATABASE: rikeiba
       MYSQL_USER: rikeiba
