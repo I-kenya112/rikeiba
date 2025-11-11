@@ -58,33 +58,53 @@
 
     {{-- 保存済みリスト一覧 --}}
     <h3 class="text-xl font-semibold mb-3">保存済み出走馬リスト</h3>
+
     <table class="table-auto w-full border rounded shadow-sm">
         <thead class="bg-sky-100">
-            <tr><th class="p-2">タイトル</th><th class="p-2">メモ</th><th class="p-2">作成日</th><th class="p-2 text-center">操作</th></tr>
+            <tr>
+                <th class="p-2">タイトル</th>
+                <th class="p-2">メモ</th>
+                <th class="p-2">作成日</th>
+                <th class="p-2 text-center">操作</th>
+            </tr>
         </thead>
+
         <tbody>
             @forelse ($lists as $list)
                 <tr class="border-t hover:bg-sky-50">
                     <td class="p-2 font-semibold">{{ $list->title }}</td>
                     <td class="p-2">{{ $list->description }}</td>
                     <td class="p-2 text-gray-500">{{ $list->created_at->format('Y-m-d') }}</td>
+
                     <td class="p-2 text-center">
-                        {{-- 1段目：分析ボタン --}}
-                        <div class="mb-2">
+
+                        {{-- 機能ボタン群（分析／血統共通度） --}}
+                        <div class="flex flex-row justify-center items-center gap-2 mb-2">
+
+                            {{-- 分析へ進む --}}
                             <a href="{{ route('inbreed.analyze.start', ['list_id' => $list->id]) }}"
-                            class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded shadow">
+                                class="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded shadow w-36 text-center">
                                 分析へ進む
                             </a>
+
+                            {{-- 血統共通度一覧 --}}
+                            <a href="{{ route('inbreed.common.index', ['list_id' => $list->id]) }}"
+                                class="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded shadow w-36 text-center">
+                                血統共通度一覧
+                            </a>
+
                         </div>
 
-                        {{-- 2段目：編集・削除 --}}
+                        {{-- 編集・削除 --}}
                         <div class="flex justify-center gap-2">
                             <a href="{{ route('horse-lists.edit', $list->id) }}"
-                            class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded shadow">
+                                class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded shadow">
                                 編集
                             </a>
+
                             <form action="{{ route('horse-lists.delete', $list->id) }}" method="POST" class="inline">
-                                @csrf @method('DELETE')
+                                @csrf
+                                @method('DELETE')
                                 <button class="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1 rounded shadow"
                                     onclick="return confirm('削除しますか？')">
                                     削除
@@ -94,7 +114,11 @@
                     </td>
                 </tr>
             @empty
-                <tr><td colspan="4" class="text-center p-4 text-gray-500">保存されたリストはありません。</td></tr>
+                <tr>
+                    <td colspan="4" class="text-center p-4 text-gray-500">
+                        保存されたリストはありません。
+                    </td>
+                </tr>
             @endforelse
         </tbody>
     </table>

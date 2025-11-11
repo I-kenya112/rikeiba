@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\HorseListController;
 use App\Http\Controllers\InbreedAnalyzeController;
+use App\Http\Controllers\InbreedCommonController;
 
 /*
 |--------------------------------------------------------------------------
@@ -71,14 +72,6 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/inbreed/analyze/start/{list_id}', [InbreedAnalyzeController::class, 'start'])
     ->name('inbreed.analyze.start');
 
-    // 血統共通度分析ページ表示
-    Route::get('/inbreed/common/{list_id}', [InbreedAnalyzeController::class, 'commonPage'])
-        ->name('inbreed.common');
-
-    // Ajax 分析実行
-    Route::post('/inbreed/common-analyze', [InbreedAnalyzeController::class, 'commonAncestor'])
-        ->name('inbreed.common-analyze');
-
     // 検索実行
     Route::post('/inbreed/analyze/search', [InbreedAnalyzeController::class, 'search'])
         ->name('inbreed.analyze.search');
@@ -91,6 +84,17 @@ Route::middleware(['auth'])->group(function () {
     ->name('ancestor.ajax.search');
 });
 
+/*
+|--------------------------------------------------------------------------
+| 血統共通度一覧ビュー（逆引き分析）
+|--------------------------------------------------------------------------
+|
+| 逆引き分析用の共通度一覧表示ページ。
+|
+*/
+
+Route::get('/inbreed/common/{list_id?}', [InbreedCommonController::class, 'index'])
+    ->name('inbreed.common.index');
 /*
 |--------------------------------------------------------------------------
 | 認証ルート
