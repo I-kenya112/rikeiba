@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
             suggestions.classList.add('hidden');
             return;
         }
-        const res = await fetch(`/api/uma/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/horse-lists/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
         suggestions.innerHTML = '';
         if (data.length === 0) {

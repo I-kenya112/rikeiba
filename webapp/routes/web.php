@@ -50,6 +50,9 @@ Route::middleware(['auth'])->group(function () {
 
     Route::delete('/horse-lists/delete/{id}', [HorseListController::class, 'destroy'])
         ->name('horse-lists.delete');
+    // 馬名サジェストAPI（Ajax）
+    Route::get('/api/horse-lists/search', [HorseListController::class, 'ajaxSearch'])
+        ->name('horse-lists.ajax.search');
 });
 
 /*
@@ -77,11 +80,11 @@ Route::middleware(['auth'])->group(function () {
         ->name('inbreed.analyze.search');
 
     // 馬名サジェストAPI（Ajax）
-    Route::get('/api/uma/search', [InbreedAnalyzeController::class, 'ajaxSearch'])
+    Route::get('/api/uma/search', [InbreedAnalyzeController::class, 'ajaxUmaSearch'])
         ->name('uma.ajax.search');
     // 祖先名サジェストAPI（Ajax）
     Route::get('/api/ancestor/search', [InbreedAnalyzeController::class, 'ajaxAncestorSearch'])
-    ->name('ancestor.ajax.search');
+        ->name('ancestor.ajax.search');
 });
 
 /*

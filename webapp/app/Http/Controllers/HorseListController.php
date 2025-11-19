@@ -149,4 +149,24 @@ class HorseListController extends Controller
 
         return redirect()->route('horse-lists.manage')->with('success', '出走馬リストを削除しました。');
     }
+
+    /**
+     * 馬名Ajax検索
+     */
+    public function ajaxSearch(Request $request)
+    {
+        $keyword = $request->get('q', '');
+        if (!$keyword) {
+            return response()->json([]);
+        }
+
+        $horses = DB::table('ri_uma')
+            ->select('KettoNum as id', 'Bamei as name')
+            ->where('Bamei', 'LIKE', "{$keyword}%")
+            ->orderBy('Bamei')
+            ->limit(20)
+            ->get();
+
+        return response()->json($horses);
+    }
 }

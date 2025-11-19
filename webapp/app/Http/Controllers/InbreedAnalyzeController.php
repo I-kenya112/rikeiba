@@ -185,6 +185,24 @@ class InbreedAnalyzeController extends Controller
     }
 
     /**
+     * 馬名Ajax検索
+     */
+    public function ajaxUmaSearch(Request $request)
+    {
+        $keyword = $request->get('q', '');
+        if (!$keyword) {
+            return response()->json([]);
+        }
+
+        $horses = RiUma::where('Bamei', 'LIKE', "%{$keyword}%")
+            ->orderBy('Bamei')
+            ->limit(20)
+            ->pluck('Bamei');
+
+        return response()->json($horses);
+    }
+
+    /**
      * 血統名サジェスト（Ajax）
      */
     public function ajaxAncestorSearch(Request $request)
@@ -197,18 +215,18 @@ class InbreedAnalyzeController extends Controller
         $pedigreeNames = DB::table('ri_pedigree')
             ->select('ancestor_name')
             ->where('ancestor_name', 'LIKE', "{$keyword}%")
-            ->limit(10);
+            ->limit(20);
 
         $inbreedNames = DB::table('ri_inbreed_ratio')
             ->select('ancestor_name')
             ->where('ancestor_name', 'LIKE', "{$keyword}%")
-            ->limit(10);
+            ->limit(20);
 
         $names = $pedigreeNames
             ->union($inbreedNames)
             ->distinct()
             ->orderBy('ancestor_name')
-            ->limit(10)
+            ->limit(20)
             ->pluck('ancestor_name');
 
         return response()->json($names);

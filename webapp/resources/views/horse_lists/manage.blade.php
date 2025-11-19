@@ -139,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const q = horseInput.value.trim();
         if (q.length < 2) return suggestions.classList.add('hidden');
 
-        const res = await fetch(`/api/uma/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/horse-lists/search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
 
         suggestions.innerHTML = '';
