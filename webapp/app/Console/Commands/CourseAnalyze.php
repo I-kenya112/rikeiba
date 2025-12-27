@@ -7,40 +7,33 @@ use App\Services\CourseAnalyzeService;
 
 class CourseAnalyze extends Command
 {
-    /**
-     * artisan コマンドの署名（＝コマンド名と引数オプション）
-     */
     protected $signature = 'course:analyze
-        {--mode=ALL : KEITO|ANCESTOR|INBREED|ALL}
+        {--mode=ALL : ANCESTOR|INBREED|ALL}
+        {--jyo= : 競馬場コード（例: 05）。未指定なら全場}
+        {--from= : 期間開始 (YYYY or YYYY-MM-DD)}
+        {--to= : 期間終了 (YYYY or YYYY-MM-DD)}
+        {--excludeYears= : 除外したい年（例：2021,2022）}
         {--grade=ALL : ALL|G1|G2|G3|OP|COND}
-        {--from= : 期間開始 (YYYY-MM-DD)}
-        {--to= : 期間終了 (YYYY-MM-DD)}
-        {--course= : カンマ区切り course_key フィルタ}
-        {--ancestor=ALL : ALL|SIRE|DAMSIRE}
-        {--soft : 緩評価（掲示板加点）を有効化}
-        {--limitYears=0 : from未指定なら直近N年だけ対象}
         {--ancestor_mode=ALL : ALL|F|M|FM}
-        {--excludeCurrentYear : 今年のデータを除外}
-        {--excludeYears= : カンマ区切りで除外したい年を指定（例：2020,2021）}';
+    ';
 
-    /**
-     * コマンド説明
-     */
-    protected $description = 'コース別血統傾向の集計（KEITO/祖先/INBREED、厳・緩モード対応）';
+    protected $description = 'コース別血統・インブリード傾向を一括集計する';
 
     public function handle(CourseAnalyzeService $svc)
     {
+        $this->info('🔥 CourseAnalyze handle() START');
+
         $opts = [
-            'mode'        => $this->option('mode'),
-            'grade'       => $this->option('grade'),
-            'from'        => $this->option('from'),
-            'to'          => $this->option('to'),
-            'course'      => $this->option('course'),
-            'ancestor'    => $this->option('ancestor'),
-            'soft'        => $this->option('soft'),
-            'limitYears'  => $this->option('limitYears'),
+            'mode'          => $this->option('mode'),
+            'jyo'           => $this->option('jyo'),
+            'from'          => $this->option('from'),
+            'to'            => $this->option('to'),
+            'excludeYears'  => $this->option('excludeYears'),
+            'grade'         => $this->option('grade'),
             'ancestor_mode' => $this->option('ancestor_mode'),
         ];
+
+        $this->info('🔥 OPTIONS = ' . json_encode($opts));
 
         $count = $svc->run($opts);
 
@@ -48,4 +41,5 @@ class CourseAnalyze extends Command
 
         return self::SUCCESS;
     }
+
 }

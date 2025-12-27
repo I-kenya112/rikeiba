@@ -33,7 +33,7 @@ class HorseListController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'horse_list' => 'required|string', // JSON文字列で受け取る
+            'horse_list' => 'required|string',
         ]);
 
         $horseList = json_decode($validated['horse_list'], true);
@@ -51,21 +51,19 @@ class HorseListController extends Controller
             ]);
 
             foreach ($horseList as $index => $horse) {
-                $uma = RiUma::select('Bamei')
-                    ->where('KettoNum', $horse['id'])
-                    ->first();
+                $uma = $this->findUmaOrFail($horse['id']);
 
                 RiHorseListItem::create([
-                    'list_id' => $list->id,
-                    'horse_id' => $horse['id'],
-                    'horse_name' => $uma->Bamei ?? $horse['name'] ?? '(取得失敗)',
-                    'order_no' => $index + 1,
-
+                    'list_id'   => $list->id,
+                    'horse_id'  => $uma->KettoNum,
+                    'horse_name'=> $uma->Bamei,
+                    'order_no'  => $index + 1,
                 ]);
             }
         });
 
-        return redirect()->route('horse-lists.manage')->with('success', '出走馬リストを保存しました。');
+        return redirect()->route('horse-lists.manage')
+            ->with('success', '出走馬リストを保存しました。');
     }
 
     /**
@@ -74,14 +72,14 @@ class HorseListController extends Controller
     public function edit($id)
     {
         $userId = Auth::id();
+
         $list = RiHorseList::where('id', $id)
             ->where('user_id', $userId)
             ->with('items')
             ->firstOrFail();
 
-        // 出走馬IDと名前を取得してJSへ渡す形式に
-        $horseList = $list->items->map(fn($item) => [
-            'id' => $item->horse_id,
+        $horseList = $list->items->map(fn ($item) => [
+            'id'   => $item->horse_id,
             'name' => $item->horse_name,
         ]);
 
@@ -94,6 +92,7 @@ class HorseListController extends Controller
     public function update(Request $request, $id)
     {
         $userId = Auth::id();
+
         $list = RiHorseList::where('id', $id)
             ->where('user_id', $userId)
             ->firstOrFail();
@@ -107,31 +106,27 @@ class HorseListController extends Controller
         $horseIds = array_filter(explode(',', $validated['horse_ids']));
 
         DB::transaction(function () use ($list, $validated, $horseIds) {
-            // タイトル・説明更新
             $list->update([
                 'title' => $validated['title'],
                 'description' => $validated['description'],
             ]);
 
-            // 旧データ削除
             RiHorseListItem::where('list_id', $list->id)->delete();
 
-            // 新データ再登録
             foreach ($horseIds as $index => $horseId) {
-                $uma = RiUma::select('Bamei')
-                    ->where('KettoNum', $horseId)
-                    ->first();
+                $uma = $this->findUmaOrFail($horseId);
 
                 RiHorseListItem::create([
-                    'list_id' => $list->id,
-                    'horse_id' => $horseId,
-                    'horse_name' => $uma->Bamei ?? '(取得失敗)',
-                    'order_no' => $index + 1,
+                    'list_id'   => $list->id,
+                    'horse_id'  => $uma->KettoNum,
+                    'horse_name'=> $uma->Bamei,
+                    'order_no'  => $index + 1,
                 ]);
             }
         });
 
-        return redirect()->route('horse-lists.manage')->with('success', '出走馬リストを更新しました。');
+        return redirect()->route('horse-lists.manage')
+            ->with('success', '出走馬リストを更新しました。');
     }
 
     /**
@@ -140,33 +135,43 @@ class HorseListController extends Controller
     public function destroy($id)
     {
         $userId = Auth::id();
-        $list = RiHorseList::where('id', $id)->where('user_id', $userId)->firstOrFail();
+
+        $list = RiHorseList::where('id', $id)
+            ->where('user_id', $userId)
+            ->firstOrFail();
 
         DB::transaction(function () use ($list) {
             RiHorseListItem::where('list_id', $list->id)->delete();
             $list->delete();
         });
 
-        return redirect()->route('horse-lists.manage')->with('success', '出走馬リストを削除しました。');
+        return redirect()->route('horse-lists.manage')
+            ->with('success', '出走馬リストを削除しました。');
     }
 
     /**
-     * 馬名Ajax検索
+     * 馬名 Ajax 検索
      */
     public function ajaxSearch(Request $request)
     {
-        $keyword = $request->get('q', '');
-        if (!$keyword) {
+        $keyword = trim($request->get('q', ''));
+        if ($keyword === '') {
             return response()->json([]);
         }
 
-        $horses = DB::table('ri_uma')
+        return RiUma::query()
             ->select('KettoNum as id', 'Bamei as name')
             ->where('Bamei', 'LIKE', "{$keyword}%")
             ->orderBy('Bamei')
             ->limit(20)
             ->get();
+    }
 
-        return response()->json($horses);
+    /**
+     * 既存 ri_uma を取得（存在しなければ例外）
+     */
+    private function findUmaOrFail(string $kettoNum): RiUma
+    {
+        return RiUma::where('KettoNum', $kettoNum)->firstOrFail();
     }
 }

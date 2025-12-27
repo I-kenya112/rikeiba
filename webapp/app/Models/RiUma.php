@@ -10,7 +10,7 @@ class RiUma extends Model
     protected $primaryKey = 'id'; // Laravelは便宜上idを使う
     public $incrementing = true;
     protected $keyType = 'int';
-    public $timestamps = true;
+    public $timestamps = false;
 
     // よく使うカラムを定義
     protected $fillable = [

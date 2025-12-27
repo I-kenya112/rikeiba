@@ -19,6 +19,16 @@
                     <!-- ✅ 出走馬リスト管理ボタン -->
                     <x-nav-link :href="route('horse-lists.manage')" :active="request()->routeIs('horse-lists.*')">
                         出走馬リスト管理
+
+                    </x-nav-link>
+                    <!-- ✅ 新規馬登録ボタン -->
+                    <x-nav-link :href="route('ri-uma.create')" :active="request()->routeIs('ri-uma.*')">
+                        新規馬登録
+                    </x-nav-link>
+
+                    <!-- ✅ コース分析ボタン -->
+                    <x-nav-link href="/course" :active="request()->is('course*')">
+                        コース分析
                     </x-nav-link>
                 </div>
             </div>

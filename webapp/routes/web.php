@@ -5,6 +5,12 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\HorseListController;
 use App\Http\Controllers\InbreedAnalyzeController;
 use App\Http\Controllers\InbreedCommonController;
+use App\Http\Controllers\CourseController;
+use App\Http\Controllers\CourseStatsController;
+use App\Http\Controllers\CourseEntriesEvalController;
+use App\Http\Controllers\HansyokuController;
+use App\Http\Controllers\RiUmaController;
+use App\Http\Controllers\Api\HorseListApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -85,7 +91,18 @@ Route::middleware(['auth'])->group(function () {
     // 祖先名サジェストAPI（Ajax）
     Route::get('/api/ancestor/search', [InbreedAnalyzeController::class, 'ajaxAncestorSearch'])
         ->name('ancestor.ajax.search');
+
+    // ri_uma 新規登録
+    Route::get('/ri-uma/create', [RiUmaController::class, 'create'])
+        ->name('ri-uma.create');
+
+    Route::post('/ri-uma/store', [RiUmaController::class, 'store'])
+        ->name('ri-uma.store');
 });
+
+// ri_hansyoku 検索 API
+Route::get('/api/hansyoku/search', [HansyokuController::class, 'ajaxSearch'])
+    ->middleware('auth');
 
 /*
 |--------------------------------------------------------------------------
@@ -95,12 +112,73 @@ Route::middleware(['auth'])->group(function () {
 | 逆引き分析用の共通度一覧表示ページ。
 |
 */
-
 Route::get('/inbreed/common/{list_id?}', [InbreedCommonController::class, 'index'])
     ->name('inbreed.common.index');
+
+/*
+|--------------------------------------------------------------------------
+| コースビュー
+|--------------------------------------------------------------------------
+*/
+Route::get('/course', function () {
+    return view('app');
+});
+
+Route::get('/course/{any}', function () {
+    return view('app');
+})->where('any', '.*');
+
+/*
+|==============================
+| コース分析 API（Laravel 12 対応）
+|==============================
+*/
+
+Route::prefix('/api')->group(function () {
+    // コース一覧
+    Route::get('/course-options', [CourseController::class, 'options']);
+
+    // コース別統計
+    Route::prefix('/course/{course_key}')->group(function () {
+        Route::get('/ancestor-stats', [CourseStatsController::class, 'ancestor']);
+        Route::get('/inbreed-stats', [CourseStatsController::class, 'inbreed']);
+        Route::post('/entries-eval', [CourseEntriesEvalController::class, 'evaluate']);
+    });
+});
+
+/*
+|--------------------------------------------------------------------------
+| 出走馬リストAPI（認証必須）
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth'])->prefix('/api')->group(function () {
+    Route::get('/horse-lists', [HorseListApiController::class, 'index']);
+    Route::get('/horse-lists/{list}/items', [HorseListApiController::class, 'items']);
+    Route::get('/horse/{horseId}/ancestors', [HorseListApiController::class, 'ancestors']);
+    Route::get('/horse/{horseId}/inbreed', [HorseListApiController::class, 'inbreed']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| コースビュー（認証必須）
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth'])->group(function () {
+
+    Route::get('/course', function () {
+        return view('app');
+    });
+
+    Route::get('/course/{any}', function () {
+        return view('app');
+    })->where('any', '.*');
+
+});
+
 /*
 |--------------------------------------------------------------------------
 | 認証ルート
 |--------------------------------------------------------------------------
 */
 require __DIR__ . '/auth.php';
+

@@ -7,6 +7,9 @@ export default {
         './vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php',
         './storage/framework/views/*.php',
         './resources/views/**/*.blade.php',
+
+        // Vue 用のスキャン対象（重要！！）
+        './resources/js/**/*.vue',
         './resources/js/**/*.js',
     ],
 
@@ -18,7 +21,6 @@ export default {
         },
     },
 
-    // 🔥 Purgeで削除されないように重要クラスをsafelistに登録
     safelist: [
         {
             pattern: /(bg|text|hover:bg|focus:ring)-(sky|green|rose|blue|gray)-(100|200|300|400|500|600|700)/,

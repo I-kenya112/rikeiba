@@ -5,6 +5,7 @@ namespace App\Services;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class CourseAnalyzeService
 {
@@ -27,89 +28,83 @@ class CourseAnalyzeService
      */
     public function run(array $opts): int
     {
-        $mode          = strtoupper($opts['mode']         ?? 'ALL');  // ALL|ANCESTOR|INBREED
-        $grade         = strtoupper($opts['grade']        ?? 'ALL');  // ALL|G1|G2|G3|OP|COND...
-        $from          = $opts['from']        ?? null;                // YYYY-MM-DD or null
-        $to            = $opts['to']          ?? null;                // YYYY-MM-DD or null
-        $courseFilter  = $opts['course']      ?? null;                // "08-TURF-2200,05-TURF-2400" など
-        $limitYears    = (int)($opts['limitYears'] ?? 0);
-        $excludeCurrentYear = !empty($opts['excludeCurrentYear']);
-        $excludeYearsRaw    = $opts['excludeYears'] ?? '';            // "2020,2021" など（未使用だが将来用）
+        $mode   = strtoupper($opts['mode'] ?? 'ALL');
+        $grade  = strtoupper($opts['grade'] ?? 'ALL');
 
-        // A-2 モード：ALL / F / M / FM
-        // ancestor_mode / ancestor の両方から拾う（後方互換）
-        $ancestorMode = strtoupper($opts['ancestor_mode'] ?? $opts['ancestor'] ?? 'ALL');
+        $jyo    = $opts['jyo'] ?? null;
+        $from   = $opts['from'] ?? null;
+        $to     = $opts['to'] ?? null;
 
-        // 除外年はとりあえず配列にしておくだけ（将来対応用）
+        $ancestorMode = strtoupper($opts['ancestor_mode'] ?? 'ALL');
+
         $excludeYears = [];
-        if (is_string($excludeYearsRaw) && trim($excludeYearsRaw) !== '') {
-            $excludeYears = array_values(array_filter(array_map('trim', explode(',', $excludeYearsRaw))));
+        if (!empty($opts['excludeYears'])) {
+            $excludeYears = array_map(
+                'intval',
+                array_filter(array_map('trim', explode(',', $opts['excludeYears'])))
+            );
         }
 
-        // 対象期間（Year ベース）の決定と、表示用 years_range 文字列
-        [$fromYear, $toYear, $yearsRange] = $this->resolveYearRange($from, $to, $limitYears, $excludeCurrentYear);
+        [$fromYear, $toYear] = $this->resolveYearRange($from, $to);
 
-        $totalUpserted = 0;
+        $total = 0;
 
-        // 祖先ベースの集計（ri_pedigree）
+        // ✅ ANCESTOR
         if ($mode === 'ALL' || $mode === 'ANCESTOR') {
-            $totalUpserted += $this->aggregateAncestors(
-                $grade,
-                $fromYear,
-                $toYear,
-                $yearsRange,
-                $courseFilter,
-                $ancestorMode
+            $total += $this->aggregateAncestors(
+                grade: $grade,
+                fromYear: $fromYear,
+                toYear: $toYear,
+                jyo: $jyo,
+                excludeYears: $excludeYears,
+                ancestorMode: $ancestorMode
             );
         }
 
-        // インブリードベースの集計（ri_inbreed_ratio）
+        // ✅ INBREED（← これが抜けていた）
         if ($mode === 'ALL' || $mode === 'INBREED') {
-            $totalUpserted += $this->aggregateInbreeds(
-                $grade,
-                $fromYear,
-                $toYear,
-                $yearsRange,
-                $courseFilter,
-                $ancestorMode  // 現状はラベル用途のみ
+            $total += $this->aggregateInbreeds(
+                grade: $grade,
+                fromYear: $fromYear,
+                toYear: $toYear,
+                jyo: $jyo,
+                excludeYears: $excludeYears,
+                ancestorMode: $ancestorMode
             );
         }
 
-        return $totalUpserted;
+        return $total;
     }
 
+
     /**
-     * 期間オプションから Year レンジを決定
+     * from / to から年の範囲を決定
      *
-     * @return array{0:int,1:int,2:string} [$fromYear, $toYear, $yearsRangeLabel]
+     * @return array{0:int,1:int} [$fromYear, $toYear]
      */
-    protected function resolveYearRange(?string $from, ?string $to, int $limitYears, bool $excludeCurrentYear): array
+    protected function resolveYearRange(?string $from, ?string $to): array
     {
-        if ($from !== null && $from !== '') {
-            $fromDate = Carbon::parse($from);
-            $toDate   = $to ? Carbon::parse($to) : $fromDate;
+        $parseYear = function (?string $v): ?int {
+            if (!$v) return null;
+            if (preg_match('/^\d{4}$/', $v)) return (int)$v;
+            return (int) Carbon::parse($v)->year;
+        };
 
-            $fromYear = (int)$fromDate->year;
-            $toYear   = (int)$toDate->year;
+        $fromYear = $parseYear($from);
+        $toYear   = $parseYear($to);
+
+        if ($fromYear !== null) {
+            $toYear ??= $fromYear;
         } else {
-            $nowYear = (int)Carbon::now()->year;
-            $toYear  = $excludeCurrentYear ? $nowYear - 1 : $nowYear;
-
-            if ($limitYears > 0) {
-                $fromYear = $toYear - $limitYears + 1;
-            } else {
-                // limitYears が 0 以下なら、その年だけ
-                $fromYear = $toYear;
-            }
+            $now = (int) Carbon::now()->year;
+            $fromYear = $toYear = $now;
         }
 
         if ($fromYear > $toYear) {
             [$fromYear, $toYear] = [$toYear, $fromYear];
         }
 
-        $yearsRange = sprintf('%04d-%04d', $fromYear, $toYear);
-
-        return [$fromYear, $toYear, $yearsRange];
+        return [$fromYear, $toYear];
     }
 
     /**
@@ -132,6 +127,54 @@ class CourseAnalyzeService
                 '-',
                 r.Kyori
             )
+        ";
+    }
+
+    /**
+     * turn_direction を返す式（LEFT / RIGHT / STRAIGHT / UNKNOWN）
+     * TrackCD は varchar(2)
+     */
+    protected function turnDirectionExpression(): string
+    {
+        return "
+            CASE
+                -- 直線
+                WHEN r.TrackCD IN ('10','29') THEN 'STRAIGHT'
+
+                -- 左回り（芝/障害の左、ダ左、サンド左、など）
+                WHEN r.TrackCD IN ('11','12','13','14','15','16','23','25','27','53') THEN 'LEFT'
+
+                -- 右回り（芝/障害の右、ダ右、サンド右、など）
+                WHEN r.TrackCD IN ('17','18','19','20','21','22','24','26','28') THEN 'RIGHT'
+
+                ELSE 'UNKNOWN'
+            END
+        ";
+    }
+
+    /**
+     * course_detail を返す式（OUTER / INNER / ... / UNKNOWN）
+     * ※ 20文字に収まるよう短めにしています
+     */
+    protected function courseDetailExpression(): string
+    {
+        return "
+            CASE
+                -- 外回り
+                WHEN r.TrackCD IN ('12','18','55') THEN 'OUTER'
+                -- 内回り
+                WHEN r.TrackCD IN ('25') THEN 'INNER'
+                -- 内→外 / 外→内
+                WHEN r.TrackCD IN ('13','19','57') THEN 'IN_TO_OUT'
+                WHEN r.TrackCD IN ('14','20','56') THEN 'OUT_TO_IN'
+                -- 2周系
+                WHEN r.TrackCD IN ('15','21','58') THEN 'INNER_2'
+                WHEN r.TrackCD IN ('16','22','59') THEN 'OUTER_2'
+                -- ダ右外（仕様的に “外回り” として扱う）
+                WHEN r.TrackCD IN ('26') THEN 'OUTER'
+
+                ELSE 'UNKNOWN'
+            END
         ";
     }
 
@@ -258,117 +301,159 @@ class CourseAnalyzeService
         string $grade,
         int $fromYear,
         int $toYear,
-        string $yearsRange,
-        ?string $courseFilter,
+        ?string $jyo,
+        array $excludeYears,
         string $ancestorMode
     ): int {
-        $courseKeyExpr  = $this->courseKeyExpression();
-        $trackTypeExpr  = $this->trackTypeExpression();
+        $trackTypeExpr     = $this->trackTypeExpression();
+        $turnDirectionExpr = $this->turnDirectionExpression();
+        $courseDetailExpr  = $this->courseDetailExpression();
 
-        $query = DB::table('ri_race as r')
-            ->join('ri_uma_race as ur', 'ur.race_key', '=', 'r.race_key')
-            ->join('ri_pedigree as p', 'p.horse_id', '=', 'ur.KettoNum')
-            ->whereNotNull('ur.KakuteiJyuni')
-            ->where('ur.KakuteiJyuni', '>', '0')
-            ->whereBetween('r.Year', [$fromYear, $toYear]);
-
-        // ancestor_mode による relation_path 絞り込み
-        $this->applyAncestorModeFilter($query, $ancestorMode);
-
-        // グレードフィルタ
-        $this->applyGradeFilter($query, $grade);
-
-        // コースフィルタ
-        $this->applyCourseFilter($query, $courseFilter, $courseKeyExpr);
-
-        // 祖先ID（未解決は "(UNKNOWN)"）、名前（NULLは "(不明)"）
         $ancestorIdExpr   = "COALESCE(p.ancestor_id_hansyoku, p.ancestor_id_uma, '(UNKNOWN)')";
-        $ancestorNameExpr  = "COALESCE(p.ancestor_name, '(不明)')";
+        $ancestorNameExpr = "COALESCE(p.ancestor_name, '(不明)')";
 
-        $rows = $query
-            ->selectRaw("
-                {$courseKeyExpr}   as course_key,
-                {$trackTypeExpr}   as track_type,
-                CAST(r.Kyori AS UNSIGNED) as distance,
-                ?                  as years_range,
-                ?                  as grade_group,
-                {$ancestorIdExpr} as ancestor_id,
-                {$ancestorNameExpr} as ancestor_name,
-                COUNT(*) as start_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) = 1 THEN 1 ELSE 0 END) as win_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 2 THEN 1 ELSE 0 END) as place_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 3 THEN 1 ELSE 0 END) as show_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 5 THEN 1 ELSE 0 END) as board_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) > 5 THEN 1 ELSE 0 END)  as out_of_board_count,
-                AVG(p.blood_share) as avg_blood_share
-            ", [
-                $yearsRange,
-                $grade,
-            ])
-            ->groupByRaw("
-                {$courseKeyExpr},
-                {$trackTypeExpr},
-                CAST(r.Kyori AS UNSIGNED),
-                {$ancestorIdExpr},
-                {$ancestorNameExpr}
-            ")
-            ->get();
+        $totalUpserted = 0;
 
-        if ($rows->isEmpty()) {
-            return 0;
-        }
+        for ($year = $fromYear; $year <= $toYear; $year++) {
 
-        $now = Carbon::now();
-        $hasAncestorModeColumn = Schema::hasColumn('ri_course_ancestor_stats', 'ancestor_mode');
-
-        $insertData = [];
-        foreach ($rows as $row) {
-            $base = [
-                'course_key'          => $row->course_key,
-                'grade_group'         => $row->grade_group,
-                'distance'            => $row->distance,
-                'track_type'          => $row->track_type,
-                'years_range'         => $row->years_range,
-                'ancestor_id'        => $row->ancestor_id,
-                'ancestor_name'       => $row->ancestor_name,
-                'start_count'         => (int)$row->start_count,
-                'win_count'           => (int)$row->win_count,
-                'place_count'         => (int)$row->place_count,
-                'show_count'          => (int)$row->show_count,
-                'board_count'         => (int)$row->board_count,
-                'out_of_board_count'  => (int)$row->out_of_board_count,
-                'avg_blood_share'     => $row->avg_blood_share,
-                'updated_at'          => $now,
-                'created_at'          => $now,
-            ];
-
-            if ($hasAncestorModeColumn) {
-                $base['ancestor_mode'] = $ancestorMode;
+            if (in_array($year, $excludeYears, true)) {
+                continue;
             }
 
-            $insertData[] = $base;
-        }
+            $startAt = microtime(true);
 
-        // unique key は ancestor_mode の有無で変える
-        $uniqueBy = [
-            'course_key',
-            'grade_group',
-            'distance',
-            'track_type',
-            'years_range',
-            'ancestor_id',
-        ];
-        if ($hasAncestorModeColumn) {
-            $uniqueBy[] = 'ancestor_mode';
-        }
+            Log::info('[CourseAnalyze][ANCESTOR] year start', [
+                'year' => $year,
+                'jyo'  => $jyo,
+                'grade'=> $grade,
+                'mode' => $ancestorMode,
+            ]);
 
-        // ✅ 内包祖先統計
-        collect($insertData)
-            ->chunk(3000)
-            ->each(function ($chunk) use ($uniqueBy) {
+            $query = DB::table('ri_race as r')
+                ->join('ri_uma_race as ur', 'ur.race_key', '=', 'r.race_key')
+                ->join('ri_pedigree as p', 'p.horse_id', '=', 'ur.KettoNum')
+                ->where('r.Year', $year)
+                ->whereNotNull('ur.KakuteiJyuni')
+                ->where('ur.KakuteiJyuni', '>', 0);
+
+            if ($jyo) {
+                $query->whereIn('r.JyoCD', [
+                    ltrim($jyo, '0'),
+                    str_pad($jyo, 2, '0', STR_PAD_LEFT),
+                ]);
+            }
+
+            $this->applyGradeFilter($query, $grade);
+            $this->applyAncestorModeFilter($query, $ancestorMode);
+
+            $rows = $query
+                ->selectRaw("
+                    ? as year,
+                    LPAD(r.JyoCD, 2, '0') as jyo_cd,
+                    {$trackTypeExpr}      as course_type,
+                    {$turnDirectionExpr} as turn_direction,
+                    {$courseDetailExpr}  as course_detail,
+                    CAST(r.Kyori AS UNSIGNED) as distance,
+                    ? as grade_group,
+                    ? as ancestor_mode,
+                    {$ancestorIdExpr}   as ancestor_id,
+                    {$ancestorNameExpr} as ancestor_name,
+
+                    COUNT(*) as start_count,
+                    SUM(CASE WHEN ur.KakuteiJyuni = 1 THEN 1 ELSE 0 END) as win_count,
+                    SUM(CASE WHEN ur.KakuteiJyuni <= 2 THEN 1 ELSE 0 END) as place_count,
+                    SUM(CASE WHEN ur.KakuteiJyuni <= 3 THEN 1 ELSE 0 END) as show_count,
+                    SUM(CASE WHEN ur.KakuteiJyuni <= 5 THEN 1 ELSE 0 END) as board_count,
+                    SUM(CASE WHEN ur.KakuteiJyuni >  5 THEN 1 ELSE 0 END) as out_of_board_count,
+                    AVG(p.blood_share) as avg_blood_share
+                ", [$year, $grade, $ancestorMode])
+                ->groupByRaw("
+                    LPAD(r.JyoCD, 2, '0'),
+                    {$trackTypeExpr},
+                    {$turnDirectionExpr},
+                    {$courseDetailExpr},
+                    CAST(r.Kyori AS UNSIGNED),
+                    {$ancestorIdExpr},
+                    {$ancestorNameExpr}
+                ")
+                ->orderBy('jyo_cd')
+                ->lazy(2000);
+
+            $buffer = [];
+            $now    = now();
+            $count  = 0;
+
+            foreach ($rows as $r) {
+                $count++;
+
+                $buffer[] = [
+                    'year'               => $r->year,
+                    'jyo_cd'             => $r->jyo_cd,
+                    'course_type'        => $r->course_type,
+                    'turn_direction'     => $r->turn_direction,
+                    'course_detail'      => $r->course_detail,
+                    'distance'           => (int)$r->distance,
+                    'grade_group'        => $r->grade_group,
+                    'ancestor_mode'      => $r->ancestor_mode,
+                    'ancestor_id'        => $r->ancestor_id,
+                    'ancestor_name'      => $r->ancestor_name,
+                    'start_count'        => (int)$r->start_count,
+                    'win_count'          => (int)$r->win_count,
+                    'place_count'        => (int)$r->place_count,
+                    'show_count'         => (int)$r->show_count,
+                    'board_count'        => (int)$r->board_count,
+                    'out_of_board_count' => (int)$r->out_of_board_count,
+                    'avg_blood_share'    => $r->avg_blood_share,
+                    'created_at'         => $now,
+                    'updated_at'         => $now,
+                ];
+
+                if (count($buffer) >= 3000) {
+                    DB::table('ri_course_ancestor_stats')->upsert(
+                        $buffer,
+                        [
+                            'year',
+                            'jyo_cd',
+                            'course_type',
+                            'turn_direction',
+                            'course_detail',
+                            'distance',
+                            'grade_group',
+                            'ancestor_mode',
+                            'ancestor_id',
+                        ],
+                        [
+                            'ancestor_name',
+                            'start_count',
+                            'win_count',
+                            'place_count',
+                            'show_count',
+                            'board_count',
+                            'out_of_board_count',
+                            'avg_blood_share',
+                            'updated_at',
+                        ]
+                    );
+
+                    $totalUpserted += count($buffer);
+                    $buffer = [];
+                }
+            }
+
+            if ($buffer) {
                 DB::table('ri_course_ancestor_stats')->upsert(
-                    $chunk->toArray(),
-                    $uniqueBy,
+                    $buffer,
+                    [
+                        'year',
+                        'jyo_cd',
+                        'course_type',
+                        'turn_direction',
+                        'course_detail',
+                        'distance',
+                        'grade_group',
+                        'ancestor_mode',
+                        'ancestor_id',
+                    ],
                     [
                         'ancestor_name',
                         'start_count',
@@ -381,124 +466,226 @@ class CourseAnalyzeService
                         'updated_at',
                     ]
                 );
-            });
 
-        return count($insertData);
+                $totalUpserted += count($buffer);
+            }
+
+            $elapsed = round(microtime(true) - $startAt, 2);
+
+            Log::info('[CourseAnalyze][ANCESTOR] year done', [
+                'year'      => $year,
+                'rows'      => $count,
+                'seconds'   => $elapsed,
+            ]);
+
+            if (app()->runningInConsole()) {
+                echo "[ANCESTOR] {$year} done ({$elapsed}s)\n";
+            }
+        }
+
+        return $totalUpserted;
     }
 
     /**
-     * インブリード（ri_inbreed_ratio）ベースの集計
+     * インブリード（ri_inbreed_ratio）ベースの年次集計
      *
-     * ※ 現時点では ancestor_mode は「ラベル用途のみ」。
-     *    relation_path での絞り込みは行っていない。
+     * - 年ごとに1行ずつ保存
+     * - 同一キー（year + course + ancestor）では必ず UPDATE
+     * - ancestor_mode は現時点ではラベル用途のみ
      */
     protected function aggregateInbreeds(
         string $grade,
         int $fromYear,
         int $toYear,
-        string $yearsRange,
-        ?string $courseFilter,
+        ?string $jyo,
+        array $excludeYears,
         string $ancestorMode
     ): int {
-        $courseKeyExpr  = $this->courseKeyExpression();
-        $trackTypeExpr  = $this->trackTypeExpression();
+        $trackTypeExpr     = $this->trackTypeExpression();
+        $turnDirectionExpr = $this->turnDirectionExpression();
+        $courseDetailExpr  = $this->courseDetailExpression();
 
-        $query = DB::table('ri_race as r')
-            ->join('ri_uma_race as ur', 'ur.race_key', '=', 'r.race_key')
-            ->join('ri_inbreed_ratio as ir', 'ir.horse_id', '=', 'ur.KettoNum')
-            ->whereNotNull('ur.KakuteiJyuni')
-            ->where('ur.KakuteiJyuni', '>', '0')
-            ->whereBetween('r.Year', [$fromYear, $toYear]);
+        $totalUpserted = 0;
 
-        // グレードフィルタ
-        $this->applyGradeFilter($query, $grade);
+        // 年ごとにループ
+        for ($year = $fromYear; $year <= $toYear; $year++) {
 
-        // コースフィルタ
-        $this->applyCourseFilter($query, $courseFilter, $courseKeyExpr);
+            if (in_array($year, $excludeYears, true)) {
+                continue;
+            }
 
-        $rows = $query
-            ->selectRaw("
-                {$courseKeyExpr}   as course_key,
-                {$trackTypeExpr}   as track_type,
+            $startAt = microtime(true);
+
+            Log::info('[CourseAnalyze][INBREED] year start', [
+                'year'          => $year,
+                'jyo'           => $jyo,
+                'grade'         => $grade,
+                'ancestor_mode' => $ancestorMode,
+            ]);
+
+            /**
+             * ベースクエリ
+             */
+            $query = DB::table('ri_race as r')
+                ->join('ri_uma_race as ur', 'ur.race_key', '=', 'r.race_key')
+                ->join('ri_inbreed_ratio as ir', 'ir.horse_id', '=', 'ur.KettoNum')
+                ->where('r.Year', $year)
+                ->whereNotNull('ur.KakuteiJyuni')
+                ->where('ur.KakuteiJyuni', '>', 0);
+
+            // 競馬場（05 / 5 両対応）
+            if ($jyo) {
+                $query->whereIn('r.JyoCD', [
+                    ltrim($jyo, '0'),
+                    str_pad($jyo, 2, '0', STR_PAD_LEFT),
+                ]);
+            }
+
+            // グレード条件
+            $this->applyGradeFilter($query, $grade);
+
+            /**
+             * SELECT & GROUP BY
+             * ※ 集計ロジックは ancestor と完全に同型
+             */
+            $cursor = $query->selectRaw("
+                ? as year,
+                LPAD(r.JyoCD, 2, '0') as jyo_cd,
+
+                CASE
+                    WHEN r.TrackCD IN ('10','11','12','13','14','15','16','17','18','19','20','21','22') THEN 'TURF'
+                    WHEN r.TrackCD IN ('23','24','25','26','27','28','29') THEN 'DIRT'
+                    WHEN r.TrackCD BETWEEN '51' AND '59' THEN 'STEEP'
+                    ELSE 'UNKNOWN'
+                END as course_type,
+
+                {$turnDirectionExpr} as turn_direction,
+                {$courseDetailExpr} as course_detail,
+
                 CAST(r.Kyori AS UNSIGNED) as distance,
-                ?                  as years_range,
-                ?                  as grade_group,
-                ir.ancestor_id     as ancestor_id,
-                ir.ancestor_name   as ancestor_name,
-                COUNT(*)           as start_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) = 1 THEN 1 ELSE 0 END) as win_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 2 THEN 1 ELSE 0 END) as place_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 3 THEN 1 ELSE 0 END) as show_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) <= 5 THEN 1 ELSE 0 END) as board_count,
-                SUM(CASE WHEN CAST(ur.KakuteiJyuni AS UNSIGNED) > 5 THEN 1 ELSE 0 END)  as out_of_board_count,
-                AVG(ir.blood_share_sum)     as avg_blood_share
+
+                ? as grade_group,
+                ? as ancestor_mode,
+
+                COALESCE(ir.ancestor_id, '(UNKNOWN)')   as ancestor_id,
+                COALESCE(ir.ancestor_name, '(不明)')    as ancestor_name,
+
+                COUNT(*) as start_count,
+                SUM(CASE WHEN ur.KakuteiJyuni = 1 THEN 1 ELSE 0 END) as win_count,
+                SUM(CASE WHEN ur.KakuteiJyuni <= 2 THEN 1 ELSE 0 END) as place_count,
+                SUM(CASE WHEN ur.KakuteiJyuni <= 3 THEN 1 ELSE 0 END) as show_count,
+                SUM(CASE WHEN ur.KakuteiJyuni <= 5 THEN 1 ELSE 0 END) as board_count,
+                SUM(CASE WHEN ur.KakuteiJyuni >  5 THEN 1 ELSE 0 END) as out_of_board_count,
+                AVG(ir.blood_share_sum) as avg_blood_share
             ", [
-                $yearsRange,
+                $year,
                 $grade,
+                $ancestorMode,
             ])
             ->groupByRaw("
-                {$courseKeyExpr},
+                LPAD(r.JyoCD, 2, '0'),
                 {$trackTypeExpr},
+                {$turnDirectionExpr},
+                {$courseDetailExpr},
                 CAST(r.Kyori AS UNSIGNED),
                 ir.ancestor_id,
                 ir.ancestor_name
             ")
-            ->get();
+            ->orderBy('jyo_cd')   // lazy() には必須
+            ->lazy(2000);
 
-        if ($rows->isEmpty()) {
-            return 0;
-        }
+            /**
+             * streaming upsert
+             */
+            $buffer   = [];
+            $now      = now();
+            $processed = 0;
 
-        $now = Carbon::now();
-        $hasAncestorModeColumn = Schema::hasColumn('ri_course_inbreed_stats', 'ancestor_mode');
+            foreach ($cursor as $r) {
+                $processed++;
 
-        $insertData = [];
-        foreach ($rows as $row) {
-            $base = [
-                'course_key'          => $row->course_key,
-                'grade_group'         => $row->grade_group,
-                'distance'            => $row->distance,
-                'track_type'          => $row->track_type,
-                'years_range'         => $row->years_range,
-                'ancestor_id'        => $row->ancestor_id,
-                'ancestor_name'       => $row->ancestor_name,
-                'start_count'         => (int)$row->start_count,
-                'win_count'           => (int)$row->win_count,
-                'place_count'         => (int)$row->place_count,
-                'show_count'          => (int)$row->show_count,
-                'board_count'         => (int)$row->board_count,
-                'out_of_board_count'  => (int)$row->out_of_board_count,
-                'avg_blood_share'     => $row->avg_blood_share,
-                'updated_at'          => $now,
-                'created_at'          => $now,
-            ];
+                $buffer[] = [
+                    'year'               => $r->year,
+                    'jyo_cd'             => $r->jyo_cd,
+                    'course_type'        => $r->course_type,
+                    'turn_direction'     => $r->turn_direction,
+                    'course_detail'      => $r->course_detail,
+                    'distance'           => (int)$r->distance,
+                    'grade_group'        => $r->grade_group,
+                    'ancestor_mode'      => $r->ancestor_mode,
+                    'ancestor_id'        => $r->ancestor_id,
+                    'ancestor_name'      => $r->ancestor_name,
+                    'start_count'        => (int)$r->start_count,
+                    'win_count'          => (int)$r->win_count,
+                    'place_count'        => (int)$r->place_count,
+                    'show_count'         => (int)$r->show_count,
+                    'board_count'        => (int)$r->board_count,
+                    'out_of_board_count' => (int)$r->out_of_board_count,
+                    'avg_blood_share'    => $r->avg_blood_share,
+                    'created_at'         => $now,
+                    'updated_at'         => $now,
+                ];
 
-            if ($hasAncestorModeColumn) {
-                $base['ancestor_mode'] = $ancestorMode;
+                // 進捗ログ（1万件ごと）
+                if ($processed % 10000 === 0) {
+                    Log::info('[CourseAnalyze][INBREED] progress', [
+                        'year'      => $year,
+                        'processed' => $processed,
+                    ]);
+
+                    if (app()->runningInConsole()) {
+                        echo "[INBREED] {$year} processed: {$processed}\n";
+                    }
+                }
+
+                // バルク upsert
+                if (count($buffer) >= 3000) {
+                    DB::table('ri_course_inbreed_stats')->upsert(
+                        $buffer,
+                        [
+                            'year',
+                            'jyo_cd',
+                            'course_type',
+                            'turn_direction',
+                            'course_detail',
+                            'distance',
+                            'grade_group',
+                            'ancestor_mode',
+                            'ancestor_id',
+                        ],
+                        [
+                            'ancestor_name',
+                            'start_count',
+                            'win_count',
+                            'place_count',
+                            'show_count',
+                            'board_count',
+                            'out_of_board_count',
+                            'avg_blood_share',
+                            'updated_at',
+                        ]
+                    );
+
+                    $totalUpserted += count($buffer);
+                    $buffer = [];
+                }
             }
 
-            $insertData[] = $base;
-        }
-
-        $uniqueBy = [
-            'course_key',
-            'grade_group',
-            'distance',
-            'track_type',
-            'years_range',
-            'ancestor_id',
-        ];
-        if ($hasAncestorModeColumn) {
-            $uniqueBy[] = 'ancestor_mode';
-        }
-
-        // ✅ インブリード統計
-        collect($insertData)
-            ->chunk(3000) // ← 3,000行ずつ分割して安全に
-            ->each(function ($chunk) use ($uniqueBy) {
+            // 残り分
+            if (!empty($buffer)) {
                 DB::table('ri_course_inbreed_stats')->upsert(
-                    $chunk->toArray(),
-                    $uniqueBy,
+                    $buffer,
+                    [
+                        'year',
+                        'jyo_cd',
+                        'course_type',
+                        'turn_direction',
+                        'course_detail',
+                        'distance',
+                        'grade_group',
+                        'ancestor_mode',
+                        'ancestor_id',
+                    ],
                     [
                         'ancestor_name',
                         'start_count',
@@ -511,8 +698,25 @@ class CourseAnalyzeService
                         'updated_at',
                     ]
                 );
-            });
 
-        return count($insertData);
+                $totalUpserted += count($buffer);
+            }
+
+            $elapsed = round(microtime(true) - $startAt, 2);
+
+            Log::info('[CourseAnalyze][INBREED] year done', [
+                'year'    => $year,
+                'rows'    => $processed,
+                'seconds' => $elapsed,
+            ]);
+
+            if (app()->runningInConsole()) {
+                echo "[INBREED] {$year} done ({$elapsed}s)\n";
+            }
+        }
+
+        return $totalUpserted;
     }
+
+
 }
