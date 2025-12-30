@@ -7,42 +7,39 @@ use Illuminate\Support\Facades\DB;
 class CourseController extends Controller
 {
     /**
-     * コース一覧（分析済みコースのみ）
+     * コース一覧（UI用・高速）
      */
     public function options()
     {
-        $rows = DB::table('ri_course_ancestor_stats')
-            ->select('jyo_cd', 'course_type', 'distance')
-            ->distinct()
+        // ri_courses は小さなマスタテーブルなので爆速
+        $rows = DB::table('ri_courses')
+            ->where('is_active', 1)
             ->orderBy('jyo_cd')
             ->orderBy('course_type')
             ->orderBy('distance')
+            ->orderBy('detail_label')
             ->get();
 
-        $placeMap = [
-            '01' => '札幌',
-            '02' => '函館',
-            '03' => '福島',
-            '04' => '新潟',
-            '05' => '東京',
-            '06' => '中山',
-            '07' => '中京',
-            '08' => '京都',
-            '09' => '阪神',
-            '10' => '小倉',
-        ];
-
-        $data = $rows->map(function ($r) use ($placeMap) {
-            $jyo = str_pad($r->jyo_cd, 2, '0', STR_PAD_LEFT);
-
-            $courseKey = "{$jyo}-{$r->course_type}-{$r->distance}";
-
-            $placeLabel = $placeMap[$jyo] ?? $jyo;
-            $trackLabel = $r->course_type === 'TURF' ? '芝' : 'ダート';
-
+        $data = $rows->map(function ($r) {
             return [
-                'course_key'   => $courseKey,
-                'course_label' => "{$placeLabel} {$trackLabel} {$r->distance}m",
+                // UIで使うキー
+                'course_key' => $r->course_key,
+
+                // 表示名（iPadで見やすい）
+                'course_label' => sprintf(
+                    '%s %s %dm %s',
+                    $r->jyo_name,
+                    $r->course_type_label,
+                    $r->distance,
+                    $r->detail_label
+                ),
+
+                // 将来UI用（今は使わなくてもOK）
+                'jyo_cd'        => $r->jyo_cd,
+                'course_type'   => $r->course_type,
+                'distance'      => $r->distance,
+                'turn_direction'=> $r->turn_direction,
+                'course_detail' => $r->course_detail,
             ];
         });
 
