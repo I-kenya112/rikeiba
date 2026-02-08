@@ -6,8 +6,10 @@ use App\Http\Controllers\HorseListController;
 use App\Http\Controllers\InbreedAnalyzeController;
 use App\Http\Controllers\InbreedCommonController;
 use App\Http\Controllers\CourseController;
-use App\Http\Controllers\CourseStatsController;
-use App\Http\Controllers\CourseEntriesEvalController;
+use App\Http\Controllers\CourseAncestorController;
+use App\Http\Controllers\CourseInbreedController;
+use App\Http\Controllers\CourseLineComboController;
+use App\Http\Controllers\CourseStallionController;
 use App\Http\Controllers\HansyokuController;
 use App\Http\Controllers\RiUmaController;
 use App\Http\Controllers\Api\HorseListApiController;
@@ -135,14 +137,36 @@ Route::get('/course/{any}', function () {
 */
 
 Route::prefix('/api')->group(function () {
+
     // コース一覧
     Route::get('/course-options', [CourseController::class, 'options']);
 
-    // コース別統計
     Route::prefix('/course/{course_key}')->group(function () {
-        Route::get('/ancestor-stats', [CourseStatsController::class, 'ancestor']);
-        Route::get('/inbreed-stats', [CourseStatsController::class, 'inbreed']);
-        Route::post('/entries-eval', [CourseEntriesEvalController::class, 'evaluate']);
+
+        // 祖先成績（ri_course_ancestor）
+        Route::get('/ancestor-stats', [
+            CourseAncestorController::class,
+            'index'
+        ]);
+
+        // インブリード成績（ri_course_inbreed_stats）
+        Route::get('/inbreed-stats', [
+            CourseInbreedController::class,
+            'index'
+        ]);
+
+        // 父×母父 系統分析（ri_course_line_combo）
+        Route::get('/line-combo-stats', [
+            CourseLineComboController::class,
+            'index'
+        ]);
+
+        // 種牡馬分析（父、母父のみ）（ri_course_stallion）
+        Route::get('/stallion-stats', [
+            CourseStallionController::class,
+            'index'
+        ]);
+
     });
 });
 
@@ -156,6 +180,7 @@ Route::middleware(['auth'])->prefix('/api')->group(function () {
     Route::get('/horse-lists/{list}/items', [HorseListApiController::class, 'items']);
     Route::get('/horse/{horseId}/ancestors', [HorseListApiController::class, 'ancestors']);
     Route::get('/horse/{horseId}/inbreed', [HorseListApiController::class, 'inbreed']);
+    Route::get('/horse/{horseId}/line', [HorseListApiController::class, 'line']);
 });
 
 /*

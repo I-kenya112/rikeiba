@@ -8,12 +8,13 @@ use Illuminate\Support\Facades\DB;
 class BuildRiCourses extends Command
 {
     protected $signature = 'ri:courses:build';
-
-    protected $description = 'ri_course_ancestor_stats から ri_courses を自動生成する';
+    protected $description = 'Build ri_courses from ri_course and ri_track_code_definitions';
 
     public function handle()
     {
-        $this->info('▶ ri_courses build start');
+        $this->info('Building ri_courses...');
+
+        DB::table('ri_courses')->truncate();
 
         // 競馬場コード → 名称
         $placeMap = [
@@ -29,79 +30,69 @@ class BuildRiCourses extends Command
             '10' => '小倉',
         ];
 
-        // コース構造ラベル
-        $detailLabelMap = [
-            'OUTER'     => '外回り',
-            'INNER'     => '内回り',
-            'INNER_2'   => '内回り',
-            'NORMAL'    => '通常',
-            'UNKNOWN'   => '通常',
-            'STRAIGHT'  => '直線',
-            'IN_TO_OUT' => '特殊',
-            'OUT_TO_IN' => '特殊',
-        ];
-
-        // 元データを distinct で取得
-        $rows = DB::table('ri_course_ancestor_stats')
+        // ri_course × TrackCD辞書
+        $rows = DB::table('ri_course as c')
+            ->join(
+                'ri_track_code_definitions as t',
+                'c.TrackCD',
+                '=',
+                't.track_cd'
+            )
             ->select(
-                'jyo_cd',
-                'course_type',
-                'distance',
-                'turn_direction',
-                'course_detail'
+                'c.JyoCD',
+                'c.Kyori',
+                'c.TrackCD',
+                't.course_type',
+                't.course_type_label',
+                't.turn_direction',
+                't.course_layout',
+                't.layout_label'
             )
             ->distinct()
             ->get();
 
-        $count = 0;
-
         foreach ($rows as $r) {
+            $jyoCd = str_pad($r->JyoCD, 2, '0', STR_PAD_LEFT);
+            $distance = (int)$r->Kyori;
 
-            $jyoCd = str_pad($r->jyo_cd, 2, '0', STR_PAD_LEFT);
-
-            $jyoName = $placeMap[$jyoCd] ?? $jyoCd;
-
-            $courseTypeLabel = match ($r->course_type) {
-                'TURF' => '芝',
-                'DIRT' => 'ダート',
-                default => $r->course_type,
-            };
-
-            // UI 用キー（内外回りをまとめる）
-            $displayGroupKey = "{$jyoCd}-{$r->course_type}-{$r->distance}";
-
-            // 内部キー（完全一致）
-            $courseKey = implode('-', [
+            $courseKey = sprintf(
+                '%s-%s-%d-%s-%s',
                 $jyoCd,
                 $r->course_type,
-                $r->distance,
+                $distance,
                 $r->turn_direction,
-                $r->course_detail,
-            ]);
-
-            $detailLabel = $detailLabelMap[$r->course_detail] ?? $r->course_detail;
-
-            DB::table('ri_courses')->updateOrInsert(
-                ['course_key' => $courseKey],
-                [
-                    'display_group_key'   => $displayGroupKey,
-                    'jyo_cd'              => $jyoCd,
-                    'jyo_name'            => $jyoName,
-                    'course_type'         => $r->course_type,
-                    'course_type_label'   => $courseTypeLabel,
-                    'distance'            => $r->distance,
-                    'turn_direction'      => $r->turn_direction,
-                    'course_detail'       => $r->course_detail,
-                    'detail_label'        => $detailLabel,
-                    'is_active'           => 1,
-                    'updated_at'          => now(),
-                    'created_at'          => now(),
-                ]
+                $r->course_layout
             );
 
-            $count++;
+            $displayGroupKey = sprintf(
+                '%s-%s-%d',
+                $jyoCd,
+                $r->course_type,
+                $distance
+            );
+
+            DB::table('ri_courses')->insert([
+                'display_group_key' => $displayGroupKey,
+                'course_key'        => $courseKey,
+
+                'jyo_cd'            => $jyoCd,
+                'jyo_name'          => $placeMap[$jyoCd] ?? $jyoCd,
+
+                'course_type'       => $r->course_type,
+                'course_type_label' => $r->course_type_label,
+                'distance'          => $distance,
+
+                'turn_direction'    => $r->turn_direction,
+                'course_detail'     => $r->course_layout,
+                'detail_label'      => $r->layout_label,
+
+                'is_active'         => 1,
+                'created_at'        => now(),
+                'updated_at'        => now(),
+            ]);
         }
 
-        $this->info("✔ ri_courses build finished ({$count} records)");
+        $this->info('ri_courses build completed!');
+        return Command::SUCCESS;
     }
 }

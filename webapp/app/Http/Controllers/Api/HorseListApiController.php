@@ -82,4 +82,49 @@ class HorseListApiController extends Controller
             ->get();
     }
 
+    /**
+     * 馬の血統系統情報（父系・母父系）
+     * ri_pedigree -> ri_hansyoku_bloodline
+     */
+    public function line(Request $request, string $horseId)
+    {
+        // 1. 父・母父を取得
+        $parents = DB::table('ri_pedigree')
+            ->where('horse_id', $horseId)
+            ->whereIn('relation_path', ['F', 'MF'])
+            ->select(
+                'relation_path',
+                'ancestor_id_hansyoku as hansyoku_num'
+            )
+            ->get()
+            ->keyBy('relation_path');
+
+        if (! isset($parents['F'], $parents['MF'])) {
+            return response()->json(null);
+        }
+
+        // 2. 血統マスタから系統を解決
+        $bloodlines = DB::table('ri_hansyoku_bloodline')
+            ->whereIn('hansyoku_num', [
+                $parents['F']->hansyoku_num,
+                $parents['MF']->hansyoku_num,
+            ])
+            ->get()
+            ->keyBy('hansyoku_num');
+
+        $fatherLine = $bloodlines[$parents['F']->hansyoku_num] ?? null;
+        $mfLine     = $bloodlines[$parents['MF']->hansyoku_num] ?? null;
+
+        // 3. 事実だけを返す
+        return [
+            'father' => [
+                'line_key'        => $fatherLine->line_key ?? null,
+                'line_key_detail' => $fatherLine->line_key_detail ?? null,
+            ],
+            'mother_father' => [
+                'line_key'        => $mfLine->line_key ?? null,
+                'line_key_detail' => $mfLine->line_key_detail ?? null,
+            ],
+        ];
+    }
 }

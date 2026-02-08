@@ -25,7 +25,16 @@ class RiPedigreeBuild extends Command
             }
         } else {
             $this->info("Building pedigree for ALL horses...");
-            $svc->buildAll();
+
+            $svc->buildAll(function ($done, $total, $lastHorseId) {
+
+                if ($done % 1000 === 0 || $done === $total) {
+                    $percent = round($done / $total * 100, 1);
+                    $this->info("  {$done} / {$total} ({$percent}%)  last={$lastHorseId}");
+                }
+
+            });
+
             $this->info("Done for all horses.");
         }
 

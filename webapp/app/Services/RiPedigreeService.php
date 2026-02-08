@@ -4,117 +4,46 @@ namespace App\Services;
 
 use App\Models\RiUma;
 use App\Models\RiHansyoku;
-use App\Models\RiPedigree;
+use App\Models\RiHansyokuBloodline;
+use App\Models\RiPedigreeNew;
 use Illuminate\Support\Facades\DB;
 
-/**
- * ri_pedigree（5代血統表）を生成するサービス
- *
- * 特徴：
- *  - ri_hansyoku を最優先に使用（正式な繁殖登録情報）
- *  - ri_uma は繁殖馬名が空のときだけ補完用に参照
- *  - キャッシュを用いてDBアクセスを最小化
- */
 class RiPedigreeService
 {
     /** @var array<string, RiHansyoku|null> */
     protected array $hcache = [];
 
     /**
-     * 全競走馬分の5代血統表を生成
-     */
-    public function buildAll(): void
-    {
-        echo "Building pedigree for ALL horses...\n";
-
-        RiUma::chunk(500, function ($umas) {
-            foreach ($umas as $uma) {
-                $this->buildForUma($uma);
-            }
-
-            // キャッシュをバッチごとにリセット（メモリ節約）
-            $this->hcache = [];
-        });
-
-        echo "✅ Pedigree build completed.\n";
-    }
-
-    /**
-     * 🔥 手動追加した馬（ri_uma_manual_logs）だけ血統表を再生成
+     * hansyokuNum => [line_key, line_key_detail]
      *
-     * @param string $source    manual / netkeiba など
-     * @param string|null $from YYYY-MM-DD
-     * @param string|null $to   YYYY-MM-DD
+     * @var array<string,array{line_key:?string,line_key_detail:?string}>
      */
-    public function buildManualOnly(string $source = 'manual', ?string $from = null, ?string $to = null): void
-    {
-        echo "Building pedigree for MANUAL horses (source={$source})...\n";
-
-        $query = DB::table('ri_uma_manual_logs')
-            ->select('ketto_num')
-            ->where('source', $source)
-            ->whereNotNull('ketto_num')
-            ->distinct()
-            ->orderBy('ketto_num');
-
-        if ($from) {
-            $query->whereDate('created_at', '>=', $from);
-        }
-        if ($to) {
-            $query->whereDate('created_at', '<=', $to);
-        }
-
-        $query->chunk(500, function ($rows) {
-            $kettoNums = collect($rows)
-                ->pluck('ketto_num')
-                ->filter()
-                ->values();
-
-            // ri_uma をまとめて取得（N+1防止）
-            $umas = RiUma::whereIn('KettoNum', $kettoNums)
-                ->get()
-                ->keyBy('KettoNum');
-
-            foreach ($kettoNums as $kettoNum) {
-                $uma = $umas->get($kettoNum);
-                if (!$uma) {
-                    echo "⚠ ri_uma not found: KettoNum={$kettoNum}\n";
-                    continue;
-                }
-                $this->buildForUma($uma);
-            }
-
-            // バッチ単位でキャッシュクリア
-            $this->hcache = [];
-        });
-
-        echo "✅ Manual pedigree build completed.\n";
-    }
+    protected array $bloodlineMap = [];
 
     /**
-     * 特定の競走馬の血統表を生成
+     * 単体生成
      */
     public function buildForUma(RiUma $uma): void
     {
         DB::transaction(function () use ($uma) {
 
-            // 既存データ削除（再生成時もクリーンに）
-            RiPedigree::where('horse_id', $uma->KettoNum)->delete();
+            RiPedigreeNew::where('horse_id', $uma->KettoNum)->delete();
 
-            // 本馬の登録
-            RiPedigree::create([
-                'horse_id'              => $uma->KettoNum,
-                'horse_name'            => $uma->Bamei,
-                'relation_path'         => 'SELF',
-                'generation'            => 0,
-                'ancestor_id_uma'       => $uma->KettoNum,
-                'ancestor_id_hansyoku'  => null,
-                'ancestor_name'         => $uma->Bamei,
-                'blood_share'           => 1.000000,
-                'source'                => 'batch',
+            // SELF
+            RiPedigreeNew::create([
+                'horse_id'        => $uma->KettoNum,
+                'horse_name'      => $uma->Bamei,
+                'relation_path'   => 'SELF',
+                'relation_type'   => 'S',
+                'generation'      => 0,
+                'position_index'  => 0,
+                'ancestor_id_uma' => $uma->KettoNum,
+                'ancestor_name'   => $uma->Bamei,
+                'blood_share'     => 1.000000,
+                'source'          => 'batch',
             ]);
 
-            // 父・母の展開開始
+            // Father
             $this->expand(
                 $uma->Ketto3InfoHansyokuNum1,
                 $uma->Ketto3InfoBamei1,
@@ -124,6 +53,7 @@ class RiPedigreeService
                 'F'
             );
 
+            // Mother
             $this->expand(
                 $uma->Ketto3InfoHansyokuNum2,
                 $uma->Ketto3InfoBamei2,
@@ -136,7 +66,37 @@ class RiPedigreeService
     }
 
     /**
-     * 再帰的に5代血統を展開する
+     * 全馬生成（進捗コールバック対応）
+     *
+     * @param callable|null $progress (int $done, int $total, string $lastHorseId)
+     */
+    public function buildAll(?callable $progress = null): void
+    {
+        $total = RiUma::count();
+        $done  = 0;
+
+        RiUma::query()
+            ->orderBy('KettoNum')
+            ->chunk(200, function ($umas) use (&$done, $total, $progress) {
+
+                foreach ($umas as $uma) {
+                    $this->buildForUma($uma);
+                    $done++;
+                }
+
+                // 進捗通知（chunkごと）
+                if ($progress) {
+                    $last = $umas->last();
+                    $progress($done, $total, $last->KettoNum);
+                }
+
+                // メモリ解放
+                $this->hcache = [];
+            });
+    }
+
+    /**
+     * 再帰展開
      */
     protected function expand(
         ?string $ancId,
@@ -162,44 +122,91 @@ class RiPedigreeService
             )->first();
         }
 
-        $ancestorName = $parent
-            ? ($parent->Bamei ?: ($parent->BameiEng ?: $ancName))
-            : $ancName;
+        $ancestorName = $parent ? $parent->Bamei : $ancName;
+        $ancestorHansyokuNum = $parent ? $parent->HansyokuNum : null;
 
-        $ancestorIdUma = ($parent && !empty($parent->KettoNum) && $parent->KettoNum !== '0000000000')
-            ? $parent->KettoNum
-            : null;
+        $relationType  = substr($path, -1);
+        $positionIndex = $this->calcPositionIndex($path);
+        $bloodline     = $this->resolveBloodline($ancestorHansyokuNum);
 
-        $ancestorIdHansyoku = $parent ? $parent->HansyokuNum : null;
-
-        RiPedigree::create([
+        RiPedigreeNew::create([
             'horse_id'             => $horseId,
             'horse_name'           => $horseName,
             'relation_path'        => $path,
+            'relation_type'        => $relationType,
             'generation'           => $gen,
-            'ancestor_id_uma'      => $ancestorIdUma,
-            'ancestor_id_hansyoku' => $ancestorIdHansyoku,
+            'position_index'       => $positionIndex,
+            'ancestor_id_hansyoku' => $ancestorHansyokuNum,
             'ancestor_name'        => $ancestorName ?: '(不明)',
             'blood_share'          => round(pow(0.5, $gen), 6),
+            'line_key'             => $bloodline['line_key'],
+            'line_key_detail'      => $bloodline['line_key_detail'],
             'source'               => 'batch',
         ]);
 
         if ($parent) {
-            $this->expand($parent->HansyokuFNum ?? null, null, $horseId, $horseName, $gen + 1, $path . 'F');
-            $this->expand($parent->HansyokuMNum ?? null, null, $horseId, $horseName, $gen + 1, $path . 'M');
+            $this->expand($parent->HansyokuFNum, null, $horseId, $horseName, $gen + 1, $path . 'F');
+            $this->expand($parent->HansyokuMNum, null, $horseId, $horseName, $gen + 1, $path . 'M');
         }
     }
 
     /**
-     * 繁殖馬をキャッシュ付きで取得
+     * F/M → position_index
      */
-    protected function getHansyoku(string $num): ?RiHansyoku
+    protected function calcPositionIndex(string $path): int
     {
-        if (isset($this->hcache[$num])) {
-            return $this->hcache[$num];
+        if ($path === 'SELF') return 0;
+
+        $v = 0;
+        foreach (str_split($path) as $c) {
+            $v <<= 1;
+            if ($c === 'F') $v |= 1;
+        }
+        return $v;
+    }
+
+    /**
+     * 系統解決（ri_hansyoku_bloodline）
+     */
+    protected function resolveBloodline(?string $hansyokuNum): array
+    {
+        if (!$hansyokuNum) {
+            return ['line_key' => null, 'line_key_detail' => null];
         }
 
-        $this->hcache[$num] = RiHansyoku::where('HansyokuNum', $num)->first();
+        if (!$this->bloodlineMap) {
+            $this->loadBloodlines();
+        }
+
+        return $this->bloodlineMap[$hansyokuNum]
+            ?? ['line_key' => null, 'line_key_detail' => null];
+    }
+
+    /**
+     * 全 hansyoku の血統分類をロード
+     */
+    protected function loadBloodlines(): void
+    {
+        $this->bloodlineMap = [];
+
+        RiHansyokuBloodline::query()
+            ->select(['hansyoku_num', 'line_key', 'line_key_detail'])
+            ->whereNotNull('line_key')
+            ->chunk(5000, function ($rows) {
+                foreach ($rows as $r) {
+                    $this->bloodlineMap[$r->hansyoku_num] = [
+                        'line_key'        => $r->line_key,
+                        'line_key_detail' => $r->line_key_detail,
+                    ];
+                }
+            });
+    }
+
+    protected function getHansyoku(string $num): ?RiHansyoku
+    {
+        if (!array_key_exists($num, $this->hcache)) {
+            $this->hcache[$num] = RiHansyoku::where('HansyokuNum', $num)->first();
+        }
         return $this->hcache[$num];
     }
 }

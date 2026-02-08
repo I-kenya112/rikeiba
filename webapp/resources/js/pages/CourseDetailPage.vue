@@ -7,15 +7,11 @@ const showInfo = ref(false);
 const route = useRoute();
 const courseKey = ref(route.params.courseKey);
 
-// ------------------
-// 年指定（単年 / 範囲）
-// ------------------
+//  年指定（単年 / 範囲）
 const yearFrom = ref("");
 const yearTo = ref("");
 
-// ------------------
 // 祖先・インブリード共通フィルタ
-// ------------------
 const gradeGroup = ref("ALL");
 const years = computed(() => {
     if (!yearFrom.value || !yearTo.value) return "";
@@ -23,15 +19,24 @@ const years = computed(() => {
 });
 const yearOptions = ref([]);
 
-// ------------------
 // 表示年数
-// ------------------
 const yearSpan = computed(() => {
     if (!yearFrom.value || !yearTo.value) return 0;
     const from = Number(yearFrom.value);
-    const to   = Number(yearTo.value);
+    const to = Number(yearTo.value);
     return to >= from ? to - from + 1 : 0;
 });
+
+// 馬場状態（ALL / GOOD / YAYA / HEAVY / BAD）
+const trackCondition = ref("ALL");
+
+const trackConditionLabelMap = {
+    ALL: "全馬場",
+    GOOD: "良",
+    YAYA: "稍重",
+    HEAVY: "重",
+    BAD: "不良",
+};
 
 // 祖先モード（ALL / F / M）
 const ancestorMode = ref("ALL");
@@ -46,26 +51,29 @@ const ancestorModeLabel = computed(() => {
     }
 });
 
-// ------------------
 // 祖先成績
-// ------------------
 const rowsAncestor = ref([]);
 const loadingAncestor = ref(false);
 
-// ------------------
 // インブリード成績
-// ------------------
 const rowsInbreed = ref([]);
 const loadingInbreed = ref(false);
 
-// ------------------
+// 種牡馬成績
+const rowsStallion = ref([]);
+const loadingStallion = ref(false);
+
+// 父×母父 系統分析
+const rowsLineCombo = ref([]);
+const loadingLineCombo = ref(false);
+
 // 出走馬タブ 共通
-// ------------------
 const horseLists = ref([]);
 const selectedListId = ref("");
 const listItems = ref([]);
 const horseAncestors = ref([]);
 const horseInbreed = ref([]);
+const horseLineCombo = ref([]);
 const loadingEntries = ref(false);
 
 // タブ
@@ -89,9 +97,7 @@ const adjustedShowRate = (row) => {
     return (row.show_count + K * prior) / (row.start_count + K);
 };
 
-// -------------------------------
 // 並び替え用スコア
-// -------------------------------
 const MIN_STARTS_PER_YEAR_ANCESTOR = 1; // 年1頭
 const SCORE_COEF_ANCESTOR = 250; // 係数
 const calcScoreAncestor = (row) => {
@@ -120,10 +126,58 @@ const calcScoreInbreed = (row) => {
     const raw = row.adjusted_show_rate * Math.log(starts + 1);
     return raw * SCORE_COEF_INBREED;
 };
+const MIN_STARTS_PER_YEAR_LINECOMBO = 0.1; //　年0.2頭
+const SCORE_COEF_LINECOMBO = 250; // 係数
+const calcScoreLineCombo = (row) => {
+    if (!yearSpan.value) return 0;
+    const starts = row.start_count;
+    const avgStarts = starts / yearSpan.value;
+    // ★ 年0.2頭未満は「足切りゾーン」
+    if (avgStarts < MIN_STARTS_PER_YEAR_LINECOMBO) {
+        return -1;
+    }
+    // メイン評価式
+    const raw = row.adjusted_show_rate * Math.log(starts + 1);
+    return raw * SCORE_COEF_LINECOMBO;
+};
 
-// -------------------------------
+// 系統ラベルマップ
+const LINE_LABEL_MAP = {
+    // サンデー系
+    sunday: "サンデーサイレンス系",
+    sunday_deep: "ディープインパクト系",
+    sunday_hearts: "ハーツクライ系",
+    sunday_staygold: "ステイゴールド系",
+    sunday_neouni: "ネオユニヴァース系",
+
+    // ミスプロ系
+    mrp: "ミスタープロスペクター系",
+    mrp_kingkame: "キングカメハメハ系",
+    mrp_duramante: "ドゥラメンテ系",
+    mrp_roadkanaloa: "ロードカナロア系",
+
+    // ナスルーラ系
+    nasrullah: "ナスルーラ系",
+    roberto: "ロベルト系",
+
+    // ノーザンダンサー系
+    nd: "ノーザンダンサー系",
+    nd_sadler: "サドラーズウェルズ系",
+};
+
+const formatLineLabel = (detail, key) => {
+    const main = LINE_LABEL_MAP[detail] || LINE_LABEL_MAP[key] || detail || key;
+    const sub = LINE_LABEL_MAP[key] || key;
+
+    if (!main) return "";
+
+    // main と sub が同じなら括弧省略
+    if (main === sub) return main;
+
+    return `${main}（${sub}）`;
+};
+
 // API: 祖先統計
-// -------------------------------
 const fetchAncestorStats = async () => {
     loadingAncestor.value = true;
     rowsAncestor.value = [];
@@ -133,6 +187,7 @@ const fetchAncestorStats = async () => {
             grade: gradeGroup.value,
             years: years.value,
             sort: "show_rate",
+            track_condition: trackCondition.value,
             ancestor_mode: ancestorMode.value || "ALL",
         },
     });
@@ -158,21 +213,19 @@ const fetchAncestorStats = async () => {
     // 初期年セット
     if (yearOptions.value.length && (!yearFrom.value || !yearTo.value)) {
         const latest = Number(yearOptions.value[0]);
-        const from   = Math.max(
+        const from = Math.max(
             latest - 9,
             Number(yearOptions.value[yearOptions.value.length - 1])
         );
 
         yearFrom.value = String(from);
-        yearTo.value   = String(latest);
+        yearTo.value = String(latest);
     }
 
     loadingAncestor.value = false;
 };
 
-// -------------------------------
 // API: インブリード統計
-// -------------------------------
 const fetchInbreedStats = async () => {
     loadingInbreed.value = true;
 
@@ -181,6 +234,7 @@ const fetchInbreedStats = async () => {
             grade: gradeGroup.value,
             years: years.value,
             sort: "show_rate",
+            track_condition: trackCondition.value,
         },
     });
 
@@ -203,28 +257,102 @@ const fetchInbreedStats = async () => {
 
 };
 
-// -------------------------------
+// API: 種牡馬統計
+const fetchStallionStats = async () => {
+    loadingStallion.value = true;
+    rowsStallion.value = [];
+
+    const res = await axios.get(
+        `/api/course/${courseKey.value}/stallion-stats`,
+        {
+            params: {
+                grade: gradeGroup.value,
+                years: years.value,
+                sort: "show_rate",
+                track_condition: trackCondition.value,
+                ancestor_mode: ancestorMode.value || "ALL",
+            },
+        }
+    );
+
+    rowsStallion.value = (res.data.data ?? []).map(r => {
+        const adjusted = adjustedShowRate(r);
+
+        return {
+            ...r,
+            adjusted_show_rate: adjusted,
+            score: calcScoreAncestor({   // ★ Ancestor と同じ評価式
+                ...r,
+                adjusted_show_rate: adjusted,
+            }),
+        };
+    });
+
+    rowsStallion.value.sort((a, b) => b.score - a.score);
+    loadingStallion.value = false;
+};
+
+// API: 父×母父 系統分析
+const fetchLineComboStats = async () => {
+    loadingLineCombo.value = true;
+    rowsLineCombo.value = [];
+
+    const res = await axios.get(
+        `/api/course/${courseKey.value}/line-combo-stats`,
+        {
+            params: {
+                grade: gradeGroup.value,
+                years: years.value,
+                track_condition: trackCondition.value,
+            },
+        }
+    );
+
+    rowsLineCombo.value = (res.data.data ?? []).map(r => {
+        const adjusted = adjustedShowRate(r);
+
+        return {
+            ...r,
+            adjusted_show_rate: adjusted,
+            score: calcScoreLineCombo({
+                ...r,
+                adjusted_show_rate: adjusted,
+            }),
+        };
+    });
+
+    // 評価指数でソート
+    rowsLineCombo.value.sort((a, b) => b.score - a.score);
+
+    loadingLineCombo.value = false;
+};
+
+// 出馬表 × 父×母父 系統相性
+const rowsEntryLineCombo = ref([]);
+const loadingEntryLineCombo = ref(false);
+
 // 初回ロード
-// -------------------------------
 onMounted(async () => {
     await fetchAncestorStats();
     await fetchInbreedStats();
+    await fetchStallionStats();
+    await fetchLineComboStats();
     fetchHorseLists();
 });
 
 // ① フィルタ変更時（API再取得専用）
 watch(
-    [gradeGroup, ancestorMode, yearFrom, yearTo],
+    [gradeGroup, trackCondition, ancestorMode, yearFrom, yearTo],
     async () => {
         await fetchAncestorStats();
         await fetchInbreedStats();
+        await fetchStallionStats();
+        await fetchLineComboStats();
         resortEntries();
     }
 );
 
-// -------------------------------
 // 出走馬リスト API
-// -------------------------------
 const fetchHorseLists = async () => {
     try {
         const res = await axios.get("/api/horse-lists");
@@ -234,9 +362,7 @@ const fetchHorseLists = async () => {
     }
 };
 
-// -------------------------------
 // ★ 馬ごとの祖先・インブリードを並び替え直す（条件変更時に再実行）
-// -------------------------------
 const resortEntries = () => {
     // --- 祖先側 ---
     horseAncestors.value.sort((a, b) => {
@@ -261,9 +387,7 @@ const resortEntries = () => {
     });
 };
 
-// -------------------------------
 // 出走馬ごとのデータ取得
-// -------------------------------
 const loadListItems = async () => {
     if (!selectedListId.value) {
         horseAncestors.value = [];
@@ -323,17 +447,48 @@ const loadListItems = async () => {
             return maxB - maxA;
         });
 
+    // 4) 父×母父 系統（正しい版）
+    const p3 = listItems.value.map((item) =>
+        axios.get(`/api/horse/${item.horse_id}/line`).then((r) => {
+            const data = r.data;
+
+            const father = data?.father;
+            const mf = data?.mother_father;
+
+            if (!father?.line_key || !mf?.line_key) {
+                return {
+                    horse_id: item.horse_id,
+                    horse_name: item.horse_name,
+                    combos: [],
+                };
+            }
+
+            // コース別・父×母父 成績と突き合わせ
+            const matched = rowsLineCombo.value.find(row =>
+                row.father_line_key === father.line_key &&
+                row.mf_line_key === mf.line_key
+            );
+
+            return {
+                horse_id: item.horse_id,
+                horse_name: item.horse_name,
+                combos: matched ? [matched] : [],
+            };
+        })
+    );
+
+    horseLineCombo.value = await Promise.all(p3);
+
     } catch (e) {
         console.error("loadListItems error", e);
     } finally {
         loadingEntries.value = false;
     }
 };
+
 watch(selectedListId, loadListItems);
 
-// -------------------------------
 // 祖先：馬に一致する祖先
-// -------------------------------
 const matchedAncestorsForHorse = (horse) => {
     if (!rowsAncestor.value.length || !horse.ancestors) return [];
 
@@ -354,9 +509,7 @@ const matchedAncestorsForHorse = (horse) => {
     );
 };
 
-// -------------------------------
 // インブリード：馬に一致するインブリード
-// -------------------------------
 const matchedInbreedForHorse = (horse) => {
     if (!rowsInbreed.value.length || !horse.inbreeds) return [];
 
@@ -369,9 +522,13 @@ const matchedInbreedForHorse = (horse) => {
         .sort((a, b) => b.cross_ratio_percent - a.cross_ratio_percent);
 };
 
-// -------------------------------
+// 出走馬 × 父×母父（表示用）
+const matchedLineComboForHorse = (horse) => {
+    if (!horse.combos?.length) return [];
+    return horse.combos;
+};
+
 // バッジ色（祖先＝複勝率）
-// -------------------------------
 const ancestorBadgeClass = (rate) => {
     if (rate >= 0.4) return "bg-green-100 text-green-800";
     if (rate >= 0.3) return "bg-sky-100 text-sky-800";
@@ -379,9 +536,7 @@ const ancestorBadgeClass = (rate) => {
     return "bg-red-100 text-red-800";
 };
 
-// -------------------------------
 // バッジ色（インブリード＝血量）
-// -------------------------------
 const inbreedBadgeClass = (ratio) => {
     if (ratio >= 6) return "bg-green-100 text-green-800";
     if (ratio >= 3) return "bg-sky-100 text-sky-800";
@@ -393,10 +548,8 @@ const inbreedBadgeClass = (ratio) => {
 <template>
     <div class="p-6 space-y-6">
         <!-- 戻るボタン -->
-        <button
-            @click="$router.push('/course')"
-            class="inline-flex items-center px-3 py-2 mb-4 bg-sky-100 text-sky-700 rounded hover:bg-sky-200 transition"
-            >
+        <button @click="$router.push('/course')"
+            class="inline-flex items-center px-3 py-2 mb-4 bg-sky-100 text-sky-700 rounded hover:bg-sky-200 transition">
             ← コース一覧に戻る
         </button>
         <!-- タイトル -->
@@ -411,10 +564,8 @@ const inbreedBadgeClass = (ratio) => {
                 （詳しく）
             </button>
             <!-- 詳細ポップアップ -->
-            <div
-                v-if="showInfo"
-                class="absolute z-50 mt-2 w-80 bg-white border border-gray-200 shadow-lg rounded-lg p-4 text-sm"
-            >
+            <div v-if="showInfo"
+                class="absolute z-50 mt-2 w-80 bg-white border border-gray-200 shadow-lg rounded-lg p-4 text-sm">
                 <p class="font-bold mb-1">ベイズ推定による補正とは？</p>
                 <p class="text-gray-600 mb-2">
                     出走頭数が少ない血統が極端な値（複勝率100%など）にならないよう、
@@ -424,10 +575,7 @@ const inbreedBadgeClass = (ratio) => {
                     これにより「たまたま好走しただけの血統」が上位に来にくくなり、
                     多くの頭数でより安定している血統を評価しやすくなっています。
                 </p>
-                <button
-                    @click="showInfo = false"
-                    class="mt-3 text-xs text-sky-600 underline"
-                >
+                <button @click="showInfo = false" class="mt-3 text-xs text-sky-600 underline">
                     閉じる
                 </button>
             </div>
@@ -446,11 +594,7 @@ const inbreedBadgeClass = (ratio) => {
             <div class="flex items-center gap-2">
                 <select v-model="yearFrom" class="border p-2 pr-8 rounded">
                     <option disabled value="">開始</option>
-                    <option
-                        v-for="y in [...yearOptions].slice().reverse()"
-                        :key="y"
-                        :value="y"
-                    >
+                    <option v-for="y in [...yearOptions].slice().reverse()" :key="y" :value="y">
                         {{ y }}
                     </option>
                 </select>
@@ -465,60 +609,74 @@ const inbreedBadgeClass = (ratio) => {
                 </select>
             </div>
 
+            <!-- 馬場状態 -->
+            <select v-model="trackCondition" class="border p-2 pr-8 rounded">
+                <option value="ALL">全馬場</option>
+                <option value="GOOD">良</option>
+                <option value="YAYA">稍重</option>
+                <option value="HEAVY">重</option>
+                <option value="BAD">不良</option>
+            </select>
+
             <!-- ★ 祖先モード（父方 / 母方 / 全血統） -->
             <select v-model="ancestorMode" class="border p-2 pr-8 rounded">
                 <option value="ALL">全血統</option>
                 <option value="F">父方のみ</option>
                 <option value="M">母方のみ</option>
             </select>
+
         </div>
 
         <!-- ▼ タブ -->
         <div class="border-b mt-2">
             <nav class="flex gap-4 text-sm">
 
-                <button
-                    class="px-3 py-2 -mb-px border-b-2"
-                    :class="activeTab === 'ancestors'
-                        ? 'border-sky-500 text-sky-600 font-bold'
-                        : 'border-transparent text-gray-500'"
-                    @click="activeTab = 'ancestors'">
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'ancestors'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'ancestors'">
                     祖先分析
                 </button>
 
-                <button
-                    class="px-3 py-2 -mb-px border-b-2"
-                    :class="activeTab === 'inbreed_table'
-                        ? 'border-sky-500 text-sky-600 font-bold'
-                        : 'border-transparent text-gray-500'"
-                    @click="activeTab = 'inbreed_table'">
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'inbreed_table'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'inbreed_table'">
                     インブリード分析
                 </button>
 
-                <button
-                    class="px-3 py-2 -mb-px border-b-2"
-                    :class="activeTab === 'entries'
-                        ? 'border-sky-500 text-sky-600 font-bold'
-                        : 'border-transparent text-gray-500'"
-                    @click="activeTab = 'entries'">
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'stallion_table'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'stallion_table'">
+                    種牡馬分析
+                </button>
+
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'line_combo_table'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'line_combo_table'">
+                    父×母父 系統
+                </button>
+
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'entries'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'entries'">
                     内包血統チェック
                 </button>
 
-                <button
-                    class="px-3 py-2 -mb-px border-b-2"
-                    :class="activeTab === 'inbreed'
-                        ? 'border-sky-500 text-sky-600 font-bold'
-                        : 'border-transparent text-gray-500'"
-                    @click="activeTab = 'inbreed'">
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'inbreed'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'inbreed'">
                     インブリード相性
+                </button>
+
+                <button class="px-3 py-2 -mb-px border-b-2" :class="activeTab === 'line_combo'
+                    ? 'border-sky-500 text-sky-600 font-bold'
+                    : 'border-transparent text-gray-500'" @click="activeTab = 'line_combo'">
+                    出馬表×系統
                 </button>
 
             </nav>
         </div>
 
-        <!-- -------------------------
-             ① 祖先分析タブ
-        ------------------------- -->
+        <!-- 1. 祖先分析タブ -->
         <div v-if="activeTab === 'ancestors'">
             <div v-if="loadingAncestor">読み込み中...</div>
 
@@ -534,10 +692,7 @@ const inbreedBadgeClass = (ratio) => {
                 </thead>
 
                 <tbody>
-                    <tr
-                        v-for="row in rowsAncestor"
-                        :key="row.id"
-                        class="border-b hover:bg-gray-50"
+                    <tr v-for="row in rowsAncestor" :key="row.id" class="border-b hover:bg-gray-50"
                         :class="row.start_count < 20 ? 'opacity-50' : ''">
 
                         <td class="px-3 py-2 font-bold">
@@ -577,9 +732,7 @@ const inbreedBadgeClass = (ratio) => {
             </table>
         </div>
 
-        <!-- -------------------------
-            ④ インブリード分析（一覧表）
-        ------------------------- -->
+        <!-- 2. インブリード分析（一覧表） -->
         <div v-if="activeTab === 'inbreed_table'">
             <div v-if="loadingInbreed">読み込み中...</div>
 
@@ -595,10 +748,7 @@ const inbreedBadgeClass = (ratio) => {
                 </thead>
 
                 <tbody>
-                    <tr
-                        v-for="row in rowsInbreed"
-                        :key="row.id"
-                        class="border-b hover:bg-gray-50"
+                    <tr v-for="row in rowsInbreed" :key="row.id" class="border-b hover:bg-gray-50"
                         :class="row.start_count < 20 ? 'opacity-50' : ''">
 
                         <td class="px-3 py-2 font-bold">
@@ -637,10 +787,122 @@ const inbreedBadgeClass = (ratio) => {
             </table>
         </div>
 
-        <!-- -------------------------
-             ② 内包血統チェックタブ
-        ------------------------- -->
-        <div v-else-if="activeTab === 'entries'">
+        <!-- 3. 種牡馬分析タブ -->
+        <div v-if="activeTab === 'stallion_table'">
+            <div v-if="loadingStallion">読み込み中...</div>
+
+            <table v-else class="min-w-full bg-white border rounded text-sm">
+                <thead class="bg-gray-100 text-xs font-bold">
+                    <tr>
+                        <th class="px-3 py-2 text-left">祖先</th>
+                        <th class="px-3 py-2 text-left">1〜3着 / 着外 (出走頭数)</th>
+                        <th class="px-3 py-2 text-left">掲示板 / 掲示板外</th>
+                        <th class="px-3 py-2 text-left">勝率 / 連対率 /複勝率 / 掲示板率</th>
+                        <th class="px-3 py-2 text-right">評価指数</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <tr v-for="row in rowsStallion" :key="row.id" class="border-b hover:bg-gray-50"
+                        :class="row.start_count < 20 ? 'opacity-50' : ''">
+
+                        <td class="px-3 py-2 font-bold">
+                            {{ row.ancestor_name }}
+                        </td>
+
+                        <td class="px-3 py-2">
+                            {{ row.win_count }} -
+                            {{ row.place_count - row.win_count }} -
+                            {{ row.show_count - row.place_count }} /
+                            {{ row.start_count - row.show_count }}
+                            ({{ row.start_count }})
+                        </td>
+
+                        <td class="px-3 py-2">
+                            ({{ row.board_count }}) /
+                            ({{ row.start_count - row.board_count }})
+                        </td>
+
+                        <td class="px-3 py-2">
+                            {{ safeRate(row.win_rate) }}% -
+                            {{ safeRate(row.place_rate) }}% -
+                            {{ safeRate(row.show_rate) }}% /
+                            {{ safeRate(row.board_rate) }}%
+                        </td>
+
+                        <td class="px-3 py-2 text-right">
+                            <span v-if="row.score >= 0">
+                                {{ row.score.toFixed(2) }}
+                            </span>
+                            <span v-else class="text-gray-400 text-xs">
+                                出走数不足
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 4. 父×母父 系統分析 -->
+        <div v-if="activeTab === 'line_combo_table'">
+            <div v-if="loadingLineCombo">読み込み中...</div>
+
+            <table v-else class="min-w-full bg-white border rounded text-sm">
+                <thead class="bg-gray-100 text-xs font-bold">
+                    <tr>
+                        <th class="px-3 py-2 text-left">父 × 母父</th>
+                        <th class="px-3 py-2 text-left">1〜3着 / 着外</th>
+                        <th class="px-3 py-2 text-left">掲示板 / 掲示板外</th>
+                        <th class="px-3 py-2 text-left">勝率 / 連対率 / 複勝率</th>
+                        <th class="px-3 py-2 text-right">評価指数</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <tr v-for="row in rowsLineCombo" :key="row.combo_label" class="border-b hover:bg-gray-50"
+                        :class="row.start_count < 20 ? 'opacity-50' : ''">
+                        <td class="px-3 py-2 font-bold">
+                            {{
+                                formatLineLabel(row.father_line_key_detail, row.father_line_key)
+                                + " × " +
+                                formatLineLabel(row.mf_line_key_detail, row.mf_line_key)
+                            }}
+                        </td>
+
+                        <td class="px-3 py-2">
+                            {{ row.win_count }} -
+                            {{ row.place_count - row.win_count }} -
+                            {{ row.show_count - row.place_count }} /
+                            {{ row.start_count - row.show_count }}
+                            ({{ row.start_count }})
+                        </td>
+
+                        <td class="px-3 py-2">
+                            ({{ row.board_count }}) /
+                            ({{ row.start_count - row.board_count }})
+                        </td>
+
+                        <td class="px-3 py-2">
+                            {{ safeRate(row.win_rate) }}% -
+                            {{ safeRate(row.place_rate) }}% -
+                            {{ safeRate(row.show_rate) }}%
+                        </td>
+
+                        <td class="px-3 py-2 text-right">
+                            <span v-if="row.score >= 0">
+                                {{ row.score.toFixed(2) }}
+                            </span>
+                            <span v-else class="text-gray-400 text-xs">
+                                出走数不足
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 5. 内包血統チェックタブ -->
+        <div v-if="activeTab === 'entries'">
 
             <div class="flex items-center gap-3 mb-4">
                 <label class="text-sm">出走馬リスト：</label>
@@ -669,9 +931,7 @@ const inbreedBadgeClass = (ratio) => {
 
             <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
 
-                <div
-                    v-for="horse in horseAncestors"
-                    :key="horse.horse_id"
+                <div v-for="horse in horseAncestors" :key="horse.horse_id"
                     class="border rounded-lg p-4 bg-white shadow-sm">
 
                     <div class="font-bold text-lg">{{ horse.horse_name }}</div>
@@ -685,13 +945,10 @@ const inbreedBadgeClass = (ratio) => {
                         </div>
 
                         <div class="flex flex-wrap gap-2">
-                            <span
-                                v-for="anc in matchedAncestorsForHorse(horse)"
-                                :key="anc.ancestor_id"
-                                :class="[
-                                    'inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold',
-                                    ancestorBadgeClass(anc.show_rate)
-                                ]">
+                            <span v-for="anc in matchedAncestorsForHorse(horse)" :key="anc.ancestor_id" :class="[
+                                'inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold',
+                                ancestorBadgeClass(anc.show_rate)
+                            ]">
                                 {{ anc.ancestor_name }}
                                 （複勝 {{ safeRate(anc.show_rate) }}%）
                             </span>
@@ -705,10 +962,8 @@ const inbreedBadgeClass = (ratio) => {
             </div>
         </div>
 
-        <!-- -------------------------
-             ③ インブリード相性タブ
-        ------------------------- -->
-        <div v-else-if="activeTab === 'inbreed'">
+        <!-- 6. インブリード相性タブ -->
+        <div v-if="activeTab === 'inbreed'">
 
             <div class="flex items-center gap-3 mb-4">
                 <label class="text-sm">出走馬リスト：</label>
@@ -731,9 +986,7 @@ const inbreedBadgeClass = (ratio) => {
 
             <!-- 出走馬ごとのカード -->
             <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                <div
-                    v-for="horse in horseInbreed"
-                    :key="horse.horse_id"
+                <div v-for="horse in horseInbreed" :key="horse.horse_id"
                     class="border rounded-lg p-4 bg-white shadow-sm">
 
                     <div class="font-bold text-lg">{{ horse.horse_name }}</div>
@@ -745,14 +998,10 @@ const inbreedBadgeClass = (ratio) => {
                         </div>
 
                         <div class="flex flex-wrap gap-2">
-                            <span
-                                v-for="inc in matchedInbreedForHorse(horse)"
-                                :key="inc.ancestor_id"
-                                :class="[
-                                    'inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold',
-                                    ancestorBadgeClass(inc.show_rate)   // ← ★複勝率の色を流用
-                                ]"
-                            >
+                            <span v-for="inc in matchedInbreedForHorse(horse)" :key="inc.ancestor_id" :class="[
+                                'inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold',
+                                inbreedBadgeClass(inc.show_rate)   // ← ★複勝率の色を流用
+                            ]">
                                 {{ inc.ancestor_name }}
                                 （複勝 {{ safeRate(inc.show_rate) }}%）
                             </span>
@@ -766,6 +1015,52 @@ const inbreedBadgeClass = (ratio) => {
             </div>
         </div>
 
+        <!-- 7. 出走馬×父×母父 系統相性タブ -->
+        <div v-if="activeTab === 'line_combo'">
+            <div class="flex items-center gap-3 mb-4">
+                <label class="text-sm">出走馬リスト：</label>
+
+                <select v-model="selectedListId" class="border p-2 rounded">
+                    <option value="">選択してください</option>
+                    <option v-for="list in horseLists" :key="list.id" :value="list.id">
+                        {{ list.title }}
+                    </option>
+                </select>
+            </div>
+
+            <div v-if="loadingEntries" class="text-gray-600 mt-2">
+                出走馬とインブリードを読み込み中...
+            </div>
+
+            <div v-else-if="!selectedListId">
+                出走馬リストを選択すると、このコースで<strong>相性の良い系統相性</strong>が表示されます。
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div v-for="horse in horseLineCombo" :key="horse.horse_id"
+                    class="border rounded-lg p-4 bg-white shadow-sm">
+                    <div class="font-bold text-lg">{{ horse.horse_name }}</div>
+
+                    <div v-if="horse.combos.length">
+                        <span v-for="c in horse.combos" :key="c.combo_label"
+                            class="inline-flex px-2 py-1 rounded-full text-xs bg-sky-100 text-sky-800">
+                            <!-- {{ c.combo_label }} -->
+                            {{
+                                formatLineLabel(c.father_line_key_detail, c.father_line_key)
+                                + " × " +
+                                formatLineLabel(c.mf_line_key_detail, c.mf_line_key)
+                            }}
+
+                            （複勝 {{ safeRate(c.show_rate) }}%）
+                        </span>
+                    </div>
+
+                    <div v-else class="text-xs text-gray-400">
+                        この馬は、このコースで強調される系統相性がありません。
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 </template>
-

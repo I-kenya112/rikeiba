@@ -4,28 +4,23 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class RiPedigree extends Model
+class RiPedigreeOld extends Model
 {
-    protected $table = 'ri_pedigree';
-
+    protected $table = 'ri_pedigree_old';
+    protected $primaryKey = 'id'; // Laravelは便宜上idを使う
+    public $incrementing = true;
+    protected $keyType = 'int';
     public $timestamps = true;
 
     protected $fillable = [
         'horse_id',
         'horse_name',
         'relation_path',
-        'relation_type',
         'generation',
-        'position_index',
         'ancestor_id_uma',
         'ancestor_id_hansyoku',
         'ancestor_name',
         'blood_share',
-        'line_key',
-        'line_key_detail',
-        'source',
+        'source'
     ];
-
-    protected $primaryKey = null;
-    public $incrementing = false;
 }
